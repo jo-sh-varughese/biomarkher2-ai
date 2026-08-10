@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BioMarkHER2 — pre-scoring review</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <h1>BioMarkHER2</h1>
+      <p class="tagline">HER2 IHC pre-scoring measurement aid</p>
+    </div>
+  </div>
+  <div class="provenance" id="provenance"></div>
+</header>
+
+<div class="banner" role="note">
+  <strong>This tool does not assign a HER2 score.</strong>
+  It measures stained tissue area and shows where the staining is, so that a
+  pathologist can score the case faster and more consistently. Every result
+  below requires review and confirmation by a qualified pathologist.
+</div>
+
+<main>
+
+  <section class="panel" aria-labelledby="choose-h">
+    <h2 id="choose-h">1 &middot; Choose a field</h2>
+    <div class="chooser">
+      <div class="chooser-block">
+        <label for="sample">Example patch from the training dataset</label>
+        <select id="sample"></select>
+        <p class="hint" id="sample-hint"></p>
+      </div>
+      <div class="chooser-divider"><span>or</span></div>
+      <div class="chooser-block">
+        <label for="upload">Upload an IHC image</label>
+        <input type="file" id="upload" accept="image/png,image/jpeg,image/tiff">
+        <p class="hint">Kept on this machine. Nothing is uploaded anywhere.</p>
+      </div>
+    </div>
+    <button id="analyze" class="primary">Analyse field</button>
+    <span class="status" id="status"></span>
+  </section>
+
+  <section class="panel hidden" id="results" aria-labelledby="results-h">
+    <h2 id="results-h">2 &middot; What the images show</h2>
+
+    <div class="legend" id="legend"></div>
+
+    <div class="grid" id="views"></div>
+
+    <h3>Stained area, as a percentage of detected tissue</h3>
+    <p class="hint">
+      Not a percentage of tumour cells. See the notes at the foot of the page.
+    </p>
+    <div class="table-scroll">
+      <table id="areas">
+        <thead>
+          <tr>
+            <th scope="col">Intensity class</th>
+            <th scope="col">Model</th>
+            <th scope="col">Threshold baseline</th>
+            <th scope="col">Difference</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="hint" id="summary-line"></p>
+
+    <div class="warn" id="limitation" role="alert"></div>
+  </section>
+
+  <section class="panel hidden" id="review" aria-labelledby="review-h">
+    <h2 id="review-h">3 &middot; Pathologist review</h2>
+    <p class="lede">
+      The measurements above are an input to your judgement, not a substitute
+      for it. Nothing is recorded until you confirm below.
+    </p>
+    <form id="review-form">
+      <div class="field">
+        <label for="reviewer">Reviewer (name or initials)</label>
+        <input type="text" id="reviewer" required autocomplete="off">
+      </div>
+      <fieldset>
+        <legend>HER2 score for this field — your assessment</legend>
+        <div class="choices" id="choices"></div>
+      </fieldset>
+      <div class="field checkbox">
+        <input type="checkbox" id="agrees">
+        <label for="agrees">
+          The measurements above are consistent with what I see
+        </label>
+      </div>
+      <div class="field">
+        <label for="notes">Notes (optional)</label>
+        <textarea id="notes" rows="3"
+          placeholder="Membrane completeness, staining pattern, artefacts, anything the intensity map misses"></textarea>
+      </div>
+      <button type="submit" class="primary">Record my assessment</button>
+      <span class="status" id="review-status"></span>
+    </form>
+  </section>
+
+  <section class="panel notes" aria-labelledby="notes-h">
+    <h2 id="notes-h">What these numbers are, and are not</h2>
+    <dl id="caveats"></dl>
+  </section>
+
+</main>
+
+<footer>
+  BioMarkHER2 &mdash; final-year project, developed with Government Medical
+  College Kottayam. Research and workflow-support use only. Not a medical
+  device and not validated for diagnostic use.
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

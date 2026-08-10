@@ -1,0 +1,10 @@
+﻿.venv/
+data/
+artifacts/
+outputs/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+configs/paths.yaml
+.claude/

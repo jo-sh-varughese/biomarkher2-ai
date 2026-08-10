@@ -1,0 +1,61 @@
+# BioMarkHER2 -- Phase 1 preprocessing configuration.
+#
+# Every parameter that affects a reported number lives here, so a run is
+# fully described by this file plus the input data.
+
+tissue:
+  # "od" = optical density, i.e. "absorbs more light than bare glass".
+  # Stain-independent by construction. A saturation-based detector was tried
+  # first and rejected: on these 40x patches it kept only stained structures,
+  # so detected tissue area rose with staining intensity (0.17 -> 0.42 across
+  # the classes). Since this mask is the denominator of every area
+  # percentage, that would have silently inflated the positive fractions.
+  method: od
+  od_floor: 0.04              # >= this grey OD counts as tissue
+  otsu_od_ceiling: 0.15       # cap on any Otsu-chosen OD threshold
+  achromatic_floor: 0.02      # reject perfectly grey shadow/dust/blur
+  saturation_floor: 0.05      # only used by the "saturation"/"combined" methods
+  value_ceiling: 0.94         # brighter than this is bare slide glass
+  value_floor: 0.06           # darker than this is a pen mark or artifact
+  min_object_area: 512
+  min_hole_area: 512
+  morph_radius: 3
+  use_otsu: false             # fixed floor; Otsu tracks stain, not tissue
+
+stain:
+  # Deliberately "none". HER2_IHC_40X is single-source, so there is no
+  # inter-scanner variation to correct, and normalizing would alter the DAB
+  # optical densities that every downstream number depends on. Switch to
+  # "macenko" when genuinely multi-source data arrives.
+  normalization: none
+  background_intensity: 255.0
+  macenko_alpha: 1.0
+  macenko_beta: 0.15
+
+  # DAB optical-density cut points defining the intensity classes.
+  # These are the single most consequential numbers in Phase 1: they define
+  # the pseudo-labels that Phase 2 trains on. They are provisional and must
+  # be reviewed against the per-class DAB statistics in the sanity check,
+  # and ultimately against pathologist judgement.
+  dab_od_weak: 0.25           # >= this is weak (1+)
+  dab_od_moderate: 0.50       # >= this is moderate (2+)
+  dab_od_strong: 0.80         # >= this is strong (3+)
+
+tiling:
+  patch_size: 512
+  overlap: 0
+  # 1 = keep native 40x, cutting each 1024 patch into four 512 tiles.
+  #
+  # This was 2 (one 512 tile at effective 20x) for the first Phase 2 run, and
+  # that run showed why it should not be. At 20x a HER2 membrane rim is 1-3
+  # pixels wide, and SegFormer's decode head predicts at a quarter of the
+  # input resolution -- so the structure the labels are made of was sub-pixel
+  # where the model actually predicts. The model produced smooth blobs, never
+  # predicted 2+ at all, and over-painted 3+ regions, which would have biased
+  # Phase 3's area percentages towards over-calling positivity.
+  #
+  # At 40x every rim is twice as wide in pixels at identical compute cost:
+  # the model still sees 512x512, it just sees less of the slide per tile.
+  downsample: 1
+  min_tissue_fraction: 0.10
+  drop_partial: true
