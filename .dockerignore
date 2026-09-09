@@ -1,0 +1,18 @@
+# Large and machine-specific -- mounted as volumes instead (docker-compose.yml).
+.venv/
+data/
+artifacts/
+
+# Not needed inside the image.
+.git/
+.pytest_cache/
+.claude/
+tests/
+scripts/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Local convenience files, not part of the build.
+start_server.bat

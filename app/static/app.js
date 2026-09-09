@@ -10,14 +10,30 @@ const VIEW_CAPTIONS = [
    "As scanned, before any processing."],
   ["tissue", "Detected tissue",
    "Everything outside this mask is excluded from the percentages below."],
-  ["model", "Model intensity map",
-   "SegFormer, trained on threshold pseudo-labels. Background left unpainted."],
+  // The model-panel caption names the architecture that produced it -- see
+  // modelCaptionNote() -- rather than a hardcoded name, since which model is
+  // deployed is a run-time fact (context.provenance.architecture), not
+  // something this file should assume.
+  ["model", "Model intensity map", null],
   ["baseline", "Threshold baseline",
    "Classical DAB optical-density thresholds -- the rule the model was trained to imitate."],
+  // Only ever present when the server has a conformal calibration loaded --
+  // render() filters this list to keys actually in data.images, so this
+  // panel simply does not appear otherwise. A confidence map, not a class
+  // map: deliberately a different palette from the other three.
+  ["ambiguity", "Prediction confidence",
+   "Where the model's calibrated prediction set is a single class (confident) vs. more than one (ambiguous) -- not a class map."],
 ];
+
+function modelCaptionNote() {
+  const architecture = context?.provenance?.architecture;
+  const label = architecture ? architecture.toUpperCase() : "The model";
+  return `${label}, trained on threshold pseudo-labels. Background left unpainted.`;
+}
 
 let context = null;
 let current = null;
+let lastRequestBody = null;
 
 /* ---------- setup ---------- */
 
@@ -32,7 +48,7 @@ async function boot() {
   const p = context.provenance;
   $("provenance").innerHTML =
     `model: <b>${escapeHtml(p.run)}</b> &middot; epoch ${p.epoch}<br>` +
-    `base checkpoint: ${escapeHtml(p.checkpoint)}`;
+    `architecture: ${escapeHtml(p.architecture)}`;
 
   const select = $("sample");
   if (context.samples.length === 0) {
@@ -72,6 +88,18 @@ async function boot() {
     if ($("upload").files.length) $("sample").selectedIndex = -1;
   });
   $("review-form").addEventListener("submit", submitReview);
+  $("download-report").addEventListener("click", downloadReport);
+  $("lightbox").addEventListener("click", (event) => {
+    // Click anywhere outside the figure (i.e. the backdrop) closes it.
+    if (event.target === $("lightbox")) $("lightbox").close();
+  });
+  // Delegated rather than attached per-image: render() rebuilds #views'
+  // contents on every analysis, and a listener on the container survives
+  // that rebuild without needing to be re-attached each time.
+  $("views").addEventListener("click", (event) => {
+    const button = event.target.closest("button.zoom");
+    if (button) openLightbox(button.dataset.key);
+  });
 }
 
 function updateSampleHint() {
@@ -87,8 +115,10 @@ function updateSampleHint() {
 async function analyze() {
   const button = $("analyze");
   button.disabled = true;
+  button.setAttribute("data-busy", "");
   setStatus("status", "Running the model on this field…");
   $("review-status").textContent = "";
+  $("report-status").textContent = "";
 
   try {
     const body = await requestBody();
@@ -100,12 +130,14 @@ async function analyze() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || response.statusText);
     current = data;
+    lastRequestBody = body;
     render(data);
     setStatus("status", "Done. Please review below.", "ok");
   } catch (err) {
     setStatus("status", String(err.message || err), "error");
   } finally {
     button.disabled = false;
+    button.removeAttribute("data-busy");
   }
 }
 
@@ -131,10 +163,16 @@ function readAsDataURL(file) {
 
 function render(data) {
   $("views").innerHTML = VIEW_CAPTIONS
+    // Not every key is always present -- "ambiguity" only exists when the
+    // server has a conformal calibration loaded for this checkpoint. A panel
+    // whose image the server did not send must not be rendered at all.
+    .filter(([key]) => key in data.images)
     .map(([key, title, note]) => `
       <div class="view"><figure>
-        <img src="${data.images[key]}" alt="${escapeHtml(title)}">
-        <figcaption><b>${escapeHtml(title)}</b>${escapeHtml(note)}</figcaption>
+        <button type="button" class="zoom" data-key="${key}" aria-label="Enlarge: ${escapeHtml(title)}">
+          <img src="${data.images[key]}" alt="${escapeHtml(title)}">
+        </button>
+        <figcaption><b>${escapeHtml(title)}</b>${escapeHtml(note ?? modelCaptionNote())}</figcaption>
       </figure></div>`)
     .join("");
 
@@ -164,11 +202,67 @@ function render(data) {
     `${data.disagreement_percent.toFixed(1)}% of tissue pixels.`;
 
   $("limitation").textContent = data.caveats.model_limitation;
+  renderConformal(data.conformal);
 
-  $("results").classList.remove("hidden");
-  $("review").classList.remove("hidden");
+  revealSection("results");
+  revealSection("review");
   $("review-form").reset();
   $("results").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// Absent (not missing-vs-null distinguishable) only in the sense that the
+// server always sends a "conformal" object; "available" is what actually
+// gates whether there is anything to show -- see app/analysis.py's
+// PatchAnalysis.to_dict(). Missing calibration degrades silently (the panel
+// and line just don't appear); a STALE one never does -- it gets a loud,
+// specific warning, same discipline as every other caveat in this app.
+function renderConformal(conformal) {
+  const line = $("conformal-line");
+  const warning = $("conformal-stale-warning");
+  if (!conformal || !conformal.available) {
+    line.classList.add("hidden");
+    warning.classList.add("hidden");
+    return;
+  }
+  line.textContent =
+    `At significance level α=${conformal.alpha}, ${conformal.ambiguous_percent.toFixed(1)}% ` +
+    `of tissue pixels have an ambiguous prediction set (the model's calibrated ` +
+    `confidence does not narrow to exactly one class there).`;
+  line.classList.remove("hidden");
+
+  if (conformal.stale_calibration) {
+    warning.textContent =
+      "This calibration was computed against a different checkpoint than the " +
+      "one currently loaded -- the ambiguity numbers above may not reflect the " +
+      "running model. Re-run scripts/calibrate_conformal.py.";
+    warning.classList.remove("hidden");
+  } else {
+    warning.classList.add("hidden");
+  }
+}
+
+function revealSection(id) {
+  const el = $(id);
+  el.classList.remove("hidden");
+  // Removing and re-adding the animation class (with a reflow forced in
+  // between) lets the reveal replay on every analysis, not only the first
+  // -- re-adding an already-present class is a no-op in the browser and
+  // would otherwise animate once and never again.
+  el.classList.remove("reveal");
+  void el.offsetWidth;
+  el.classList.add("reveal");
+}
+
+/* ---------- image lightbox ---------- */
+
+function openLightbox(key) {
+  if (!current) return;
+  const entry = VIEW_CAPTIONS.find(([k]) => k === key);
+  const title = entry ? entry[1] : "";
+  $("lightbox-img").src = current.images[key];
+  $("lightbox-img").alt = title;
+  $("lightbox-caption").textContent = title;
+  $("lightbox").showModal();
 }
 
 /* ---------- review ---------- */
@@ -207,6 +301,45 @@ async function submitReview(event) {
     setStatus("review-status", `Recorded to ${data.log}`, "ok");
   } catch (err) {
     setStatus("review-status", String(err.message || err), "error");
+  }
+}
+
+/* ---------- report ---------- */
+
+async function downloadReport() {
+  if (!current || !lastRequestBody) return;
+  const button = $("download-report");
+  button.disabled = true;
+  button.setAttribute("data-busy", "");
+  setStatus("report-status", "Building report…");
+
+  try {
+    const response = await fetch("/api/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(lastRequestBody),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || response.statusText);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const match = (response.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = match ? match[1] : "biomarkher2-report.pdf";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStatus("report-status", "Downloaded.", "ok");
+  } catch (err) {
+    setStatus("report-status", String(err.message || err), "error");
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("data-busy");
   }
 }
 

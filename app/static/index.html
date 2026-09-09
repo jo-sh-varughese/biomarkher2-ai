@@ -20,23 +20,25 @@
 </header>
 
 <div class="banner" role="note">
-  <strong>This tool does not assign a HER2 score.</strong>
-  It measures stained tissue area and shows where the staining is, so that a
-  pathologist can score the case faster and more consistently. Every result
-  below requires review and confirmation by a qualified pathologist.
+  <div>
+    <strong>This tool does not assign a HER2 score.</strong>
+    It measures stained tissue area and shows where the staining is, so that a
+    pathologist can score the case faster and more consistently. Every result
+    below requires review and confirmation by a qualified pathologist.
+  </div>
 </div>
 
 <main>
 
   <section class="panel" aria-labelledby="choose-h">
-    <h2 id="choose-h">1 &middot; Choose a field</h2>
+    <h2 id="choose-h"><span class="step" aria-hidden="true">1</span>Choose a field</h2>
     <div class="chooser">
       <div class="chooser-block">
         <label for="sample">Example patch from the training dataset</label>
         <select id="sample"></select>
         <p class="hint" id="sample-hint"></p>
       </div>
-      <div class="chooser-divider"><span>or</span></div>
+      <div class="chooser-divider">or</div>
       <div class="chooser-block">
         <label for="upload">Upload an IHC image</label>
         <input type="file" id="upload" accept="image/png,image/jpeg,image/tiff">
@@ -48,7 +50,7 @@
   </section>
 
   <section class="panel hidden" id="results" aria-labelledby="results-h">
-    <h2 id="results-h">2 &middot; What the images show</h2>
+    <h2 id="results-h"><span class="step" aria-hidden="true">2</span>What the images show</h2>
 
     <div class="legend" id="legend"></div>
 
@@ -72,12 +74,22 @@
       </table>
     </div>
     <p class="hint" id="summary-line"></p>
+    <p class="hint hidden" id="conformal-line"></p>
 
     <div class="warn" id="limitation" role="alert"></div>
+    <div class="warn hidden" id="conformal-stale-warning" role="alert"></div>
+
+    <div class="report-action">
+      <p>Export exactly what is shown above — images, measurements, and every caveat — as a PDF.</p>
+      <button id="download-report" class="secondary" type="button">
+        <span class="icon" aria-hidden="true">&#8681;</span>Download PDF report
+      </button>
+      <span class="status" id="report-status"></span>
+    </div>
   </section>
 
   <section class="panel hidden" id="review" aria-labelledby="review-h">
-    <h2 id="review-h">3 &middot; Pathologist review</h2>
+    <h2 id="review-h"><span class="step" aria-hidden="true">3</span>Pathologist review</h2>
     <p class="lede">
       The measurements above are an input to your judgement, not a substitute
       for it. Nothing is recorded until you confirm below.
@@ -119,6 +131,13 @@
   College Kottayam. Research and workflow-support use only. Not a medical
   device and not validated for diagnostic use.
 </footer>
+
+<dialog id="lightbox" aria-label="Enlarged view">
+  <figure>
+    <img id="lightbox-img" src="" alt="">
+    <figcaption id="lightbox-caption"></figcaption>
+  </figure>
+</dialog>
 
 <script src="/static/app.js"></script>
 </body>

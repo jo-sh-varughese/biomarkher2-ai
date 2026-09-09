@@ -1,0 +1,16 @@
+# Binds the viewer to 127.0.0.1 on the HOST only, matching app/server.py's
+# own "local demonstration only" stance even though the container's network
+# is otherwise isolated by Docker. Change the port mapping only alongside
+# adding real authentication in front of the service -- see Dockerfile.
+services:
+  biomarkher2:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Read-only: the viewer only ever reads sample patches from here.
+      - ./data:/app/data:ro
+      # Read-write: checkpoints are read, and artifacts/reviews.jsonl is
+      # appended to every time a pathologist records a review.
+      - ./artifacts:/app/artifacts
+    command: ["--run", "artifacts/phase2_unet", "--patch-root", "data/raw"]

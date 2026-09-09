@@ -1,6 +1,6 @@
 """Local review viewer for BioMarkHER2.
 
-    python -m app.server --run artifacts/phase2_40x
+    python -m app.server --run artifacts/phase2_unet
 
 Then open http://127.0.0.1:8000.
 
@@ -42,6 +42,7 @@ from app.analysis import (
     TARGET_CAVEAT,
     Analyzer,
 )
+from app.report import build_report_pdf_bytes
 from preprocessing.baseline import CLASS_NAMES, NUM_CLASSES
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -112,11 +113,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:
         print(f"  {self.address_string()} {fmt % args}")
 
-    def _send(self, code: int, body: bytes, content_type: str) -> None:
+    def _send(
+        self, code: int, body: bytes, content_type: str, extra_headers: dict | None = None
+    ) -> None:
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for name, value in (extra_headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -146,6 +151,8 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._read_json()
             if path == "/api/analyze":
                 return self._json(200, self._analyze(payload))
+            if path == "/api/report":
+                return self._report(payload)
             if path == "/api/review":
                 return self._json(200, self._review(payload))
             self._json(404, {"error": f"No such path: {path}"})
@@ -196,6 +203,27 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Send either patch_id or image")
         return self.state.analyzer.analyze(rgb, patch_id=patch_id).to_dict()
 
+    def _report(self, payload: dict) -> None:
+        """Re-run the analysis and stream it back as a PDF, not JSON.
+
+        Re-analyzing rather than caching the last result keeps this route
+        stateless and immune to a stale cache reflecting a different image
+        than the one currently on screen -- the same reason /api/analyze
+        does not cache either.
+        """
+        result = self._analyze(payload)
+        pdf_bytes = build_report_pdf_bytes(result)
+        patch_id = str(payload.get("patch_id") or payload.get("name") or "report")
+        safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in patch_id)
+        self._send(
+            200,
+            pdf_bytes,
+            "application/pdf",
+            extra_headers={
+                "Content-Disposition": f'attachment; filename="{safe_name}.pdf"'
+            },
+        )
+
     def _review(self, payload: dict) -> dict:
         score = str(payload.get("score", ""))
         if score not in REVIEW_CHOICES:
@@ -216,21 +244,33 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", default="artifacts/phase2_40x",
+    parser.add_argument("--run", default="artifacts/phase2_unet",
                         help="run directory containing best.pt")
     parser.add_argument("--config", default="configs/training.yaml")
     parser.add_argument("--preprocessing", default="configs/preprocessing.yaml")
     parser.add_argument("--patch-root", default="data/raw")
     parser.add_argument("--reviews", default="artifacts/reviews.jsonl")
+    parser.add_argument(
+        "--conformal-alpha", type=float, default=0.10,
+        help="Significance level for conformal prediction sets (only used if "
+        "<run>/conformal_calibration.npz exists; see scripts/calibrate_conformal.py).",
+    )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
     print(f"Loading model from {args.run} ...")
-    analyzer = Analyzer(args.run, args.config, args.preprocessing)
+    analyzer = Analyzer(args.run, args.config, args.preprocessing, args.conformal_alpha)
     Handler.state = State(analyzer, Path(args.patch_root), Path(args.reviews))
     print(f"Checkpoint epoch {analyzer.checkpoint_epoch}; "
           f"{len(Handler.state.samples)} sample patches indexed.")
+    if analyzer.calibrator is not None:
+        stale = " (STALE -- recalibrate)" if analyzer.conformal_stale else ""
+        print(f"Conformal calibration loaded from {args.run} at alpha="
+              f"{args.conformal_alpha}{stale}.")
+    else:
+        print("No conformal calibration found for this run; ambiguity fields "
+              "will not be served (see scripts/calibrate_conformal.py).")
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"\nWARNING: binding to {args.host}. This viewer has no "
               "authentication and shows medical images. Local use only.\n")
