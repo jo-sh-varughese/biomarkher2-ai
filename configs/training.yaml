@@ -1,9 +1,15 @@
-# BioMarkHER2 -- Phase 2 training configuration.
+# BioMarkHER2 -- training configuration: ResNet18-UNet, RGB+DAB input.
 #
 # The defaults here describe a run that actually finishes on the machine this
 # project is developed on: CPU only, 4 threads, no GPU. They are deliberately
 # modest. To train on everything, set the three max_*_patches entries to null
 # and raise epochs -- expect that to take days at this batch size on CPU.
+#
+# This used to be one of two configs (this one for SegFormer, a separate
+# configs/training_unet.yaml for the ResNet18-UNet candidate being compared
+# against it). SegFormer lost the comparison on every class (see PHASE5.md)
+# and was removed; the two configs have been folded into this one file, since
+# there is now only one architecture to configure.
 
 split:
   # Held out = patches whose FILENAME origin token is "test", not patches in
@@ -21,21 +27,24 @@ split:
   require_all_classes: true
 
 model:
-  checkpoint: nvidia/segformer-b0-finetuned-ade-512-512
+  architecture: unet
   num_classes: 5              # background, negative, weak, moderate, strong
   image_size: 512             # 1024 @ 40x downsampled by 2 -> 512 @ ~20x
-  pretrained: true
+  pretrained: true            # ImageNet-pretrained ResNet18 encoder
+  in_channels: 4               # RGB + DAB optical density -- see models/unet_seg.py
 
 loss:
   cross_entropy_weight: 1.0
   dice_weight: 0.5            # rare-class insurance; see training/losses.py
+  focal_weight: 1.0           # downweights easy pixels; see training/losses.py
+  focal_gamma: 2.0
   class_weights: null         # inverse-frequency weighting is available but off
   ignore_index: -100
   label_smoothing: 0.0
   dice_smooth: 1.0
 
 optim:
-  learning_rate: 6.0e-5
+  learning_rate: 1.0e-4       # not deeply tuned -- see PHASE5.md
   weight_decay: 0.01
   epochs: 4
   batch_size: 2               # 512x512 on CPU
@@ -65,5 +74,5 @@ data:
   max_holdout_patches: 200
   augment: true               # flips and 90-degree rotations only
 
-output_dir: artifacts/phase2_40x
+output_dir: artifacts/phase2_unet
 seed: 20260805

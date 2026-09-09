@@ -26,6 +26,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from preprocessing.baseline import NUM_CLASSES
+from preprocessing.stains import dab_channel
 from training.pseudo_labels import PseudoLabelCache
 
 
@@ -48,6 +49,7 @@ class PseudoLabelDataset(Dataset):
         augment: bool = False,
         seed: int = 0,
         folder_classes: dict[str, int] | None = None,
+        include_dab: bool = False,
     ) -> None:
         if not patch_ids:
             raise ValueError("Refusing to build a dataset over zero patches.")
@@ -55,6 +57,12 @@ class PseudoLabelDataset(Dataset):
         self.patch_ids = list(patch_ids)
         self.augment = augment
         self.folder_classes = folder_classes or {}
+        self.include_dab = include_dab
+        """When True, a 4th channel (DAB optical density) is appended to
+        ``pixel_values`` -- see models/unet_seg.py's module docstring for
+        why. Computed AFTER augmentation, from the already-transformed RGB,
+        so it is consistent with the geometric transform by construction
+        rather than needing its own copy of the flip/rotation logic."""
         self._rng = np.random.default_rng(seed)
 
     def __len__(self) -> int:
@@ -67,6 +75,10 @@ class PseudoLabelDataset(Dataset):
             rgb, label = self._augment(rgb, label)
 
         pixels = torch.from_numpy(np.ascontiguousarray(rgb)).permute(2, 0, 1).float() / 255.0
+        if self.include_dab:
+            dab = dab_channel(rgb).astype(np.float32)
+            dab_tensor = torch.from_numpy(np.ascontiguousarray(dab)).unsqueeze(0)
+            pixels = torch.cat([pixels, dab_tensor], dim=0)
         return {
             "pixel_values": pixels,
             "labels": torch.from_numpy(np.ascontiguousarray(label)).long(),

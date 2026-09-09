@@ -283,6 +283,47 @@ def test_dataset_refuses_to_be_empty(cached):
         PseudoLabelDataset(cache, [])
 
 
+def test_include_dab_appends_a_fourth_channel(cached):
+    import torch
+
+    cache, records, _ = cached
+    ids = [r.patch_id for r in records]
+    plain = PseudoLabelDataset(cache, ids, include_dab=False)
+    with_dab = PseudoLabelDataset(cache, ids, include_dab=True)
+
+    assert plain[0]["pixel_values"].shape[0] == 3
+    sample = with_dab[0]
+    assert sample["pixel_values"].shape[0] == 4
+    assert sample["pixel_values"].dtype == torch.float32
+    # The RGB channels are unaffected by turning the DAB channel on.
+    torch.testing.assert_close(sample["pixel_values"][:3], plain[0]["pixel_values"])
+    assert float(sample["pixel_values"][3].min()) >= 0.0
+
+
+def test_the_dab_channel_matches_the_augmented_image_not_the_original(cached):
+    """DAB is derived AFTER augmentation, so a flipped/rotated sample's DAB
+    channel must describe the flipped/rotated pixels, not the original ones
+    -- a mismatch here would train the model on a DAB channel that
+    disagrees with what its own RGB channels actually show."""
+    from preprocessing.stains import dab_channel
+
+    cache, records, _ = cached
+    ids = [r.patch_id for r in records]
+    dataset = PseudoLabelDataset(cache, ids, include_dab=True, augment=True, seed=1)
+
+    sample = dataset[0]
+    # Reconstruct the RGB this sample actually yielded (0..1 float back to
+    # uint8) and independently recompute its DAB channel; the two must agree.
+    import numpy as np
+    import torch
+
+    rgb_from_sample = (sample["pixel_values"][:3].permute(1, 2, 0).numpy() * 255.0).round()
+    expected_dab = dab_channel(rgb_from_sample.astype(np.uint8))
+    torch.testing.assert_close(
+        sample["pixel_values"][3], torch.from_numpy(expected_dab.astype(np.float32)), atol=1e-3, rtol=1e-3
+    )
+
+
 def test_class_pixel_counts_sums_to_the_pixel_total(cached):
     cache, records, _ = cached
     ids = [r.patch_id for r in records]

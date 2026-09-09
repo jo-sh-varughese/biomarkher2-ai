@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from matplotlib.patches import Patch
 
-from models.segformer_seg import build_model, normalize_batch
+from models import prepare_pixel_array, select_architecture
 from preprocessing.baseline import CLASS_NAMES, NUM_CLASSES
 from preprocessing.sources import DirectoryPatchSource
 from training.config import TrainingConfig
@@ -43,7 +43,7 @@ DISAGREE_CMAP = ListedColormap(["#d62728"])
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", default="artifacts/phase2")
+    parser.add_argument("--run", default="artifacts/phase2_unet")
     parser.add_argument("--config", default="configs/training.yaml")
     parser.add_argument("--count", type=int, default=8)
     return parser.parse_args()
@@ -54,6 +54,7 @@ def main() -> int:
     run = Path(args.run)
     config = TrainingConfig.from_yaml(args.config)
 
+    build_model, normalize_batch = select_architecture(config.model.architecture)
     checkpoint = torch.load(run / "best.pt", map_location="cpu", weights_only=False)
     model = build_model(config.model, verbose=False)
     model.load_state_dict(checkpoint["model_state"])
@@ -73,7 +74,8 @@ def main() -> int:
     fig, axes = plt.subplots(len(chosen), 4, figsize=(12, 3 * len(chosen)), squeeze=False)
     for row, patch_id in enumerate(chosen):
         rgb, target = cache.read(patch_id)
-        pixels = torch.from_numpy(rgb).permute(2, 0, 1).float()[None] / 255.0
+        array = prepare_pixel_array(rgb, config.model.in_channels)
+        pixels = torch.from_numpy(np.ascontiguousarray(array)).permute(2, 0, 1).float()[None]
         with torch.no_grad():
             prediction = model(normalize_batch(pixels)).argmax(dim=1)[0].numpy()
 

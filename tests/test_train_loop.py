@@ -1,6 +1,6 @@
 """End-to-end smoke test of the Phase 2 training loop.
 
-Runs the real loop -- real splits, real cache, real SegFormer (untrained, so
+Runs the real loop -- real splits, real cache, the real U-Net (untrained, so
 no download), real optimiser -- over a handful of tiny synthetic patches. It
 is not a test of whether the model learns anything; it is a test that the
 pieces are wired to each other correctly and that the artifacts a reader will
@@ -234,6 +234,117 @@ def test_resolve_rejects_an_unknown_string(tmp_path):
     config.loss.class_weights = "balanced"
     with pytest.raises(ValueError, match="auto"):
         resolve_class_weights(config, PseudoLabelCache(tmp_path), [], verbose=False)
+
+
+def _small_config(root) -> TrainingConfig:
+    config = TrainingConfig()
+    config.data.patch_root = str(root / "data")
+    config.data.cache_root = str(root / "cache")
+    config.data.augment = True
+    config.model.pretrained = False
+    config.optim.epochs = 2
+    config.optim.batch_size = 2
+    config.optim.grad_accum_steps = 2
+    config.output_dir = str(root / "artifacts")
+    return config
+
+
+def _build_cache_for(config, root) -> None:
+    write_dataset(root / "data")
+    source = DirectoryPatchSource(config.data.patch_root, splits=["train", "test"])
+    preprocessing = PreprocessingConfig()
+    preprocessing.tiling.downsample = 1
+    preprocessing.tiling.patch_size = 32
+    cache = PseudoLabelCache(config.data.cache_root)
+    build_cache(source, PreprocessingPipeline(preprocessing), cache)
+
+
+def test_a_simulated_interruption_leaves_a_resume_checkpoint(tmp_path):
+    from pathlib import Path
+
+    from training.train import RESUME_NAME, TrainingInterrupted
+
+    torch.set_num_threads(1)
+    config = _small_config(tmp_path)
+    _build_cache_for(config, tmp_path)
+
+    with pytest.raises(TrainingInterrupted):
+        train(config, verbose=False, checkpoint_every=1, _debug_stop_after_batches=2)
+
+    resume_path = Path(config.output_dir) / RESUME_NAME
+    assert resume_path.is_file()
+    state = torch.load(resume_path, map_location="cpu", weights_only=False)
+    assert state["epoch"] == 1
+    assert state["batches_done"] == 2
+    assert "model_state" in state and "optimizer_state" in state
+
+
+def test_resuming_completes_the_run_with_no_epoch_skipped_or_duplicated(tmp_path):
+    from pathlib import Path
+
+    from training.train import TrainingInterrupted
+
+    torch.set_num_threads(1)
+    config = _small_config(tmp_path)
+    _build_cache_for(config, tmp_path)
+
+    with pytest.raises(TrainingInterrupted):
+        train(config, verbose=False, checkpoint_every=1, _debug_stop_after_batches=2)
+
+    summary = train(config, verbose=False, resume=True)
+    assert summary["selected_epoch"] in (1, 2)
+
+    rows = list(csv.DictReader(
+        (Path(config.output_dir) / "epoch_log.csv").read_text(encoding="utf-8").splitlines()
+    ))
+    assert [int(r["epoch"]) for r in rows] == [1, 2]
+
+
+def test_the_resume_checkpoint_is_deleted_once_the_run_completes(tmp_path):
+    from pathlib import Path
+
+    from training.train import RESUME_NAME, TrainingInterrupted
+
+    torch.set_num_threads(1)
+    config = _small_config(tmp_path)
+    _build_cache_for(config, tmp_path)
+
+    with pytest.raises(TrainingInterrupted):
+        train(config, verbose=False, checkpoint_every=1, _debug_stop_after_batches=2)
+    train(config, verbose=False, resume=True)
+
+    assert not (Path(config.output_dir) / RESUME_NAME).is_file()
+
+
+def test_resuming_an_interruption_at_an_epoch_boundary_starts_the_next_epoch(tmp_path):
+    """An interruption caught right at a clean epoch boundary (batches_done=0
+    for the next epoch) must resume there, not replay the epoch that just
+    finished."""
+    from pathlib import Path
+
+    from training.train import RESUME_NAME
+
+    torch.set_num_threads(1)
+    config = _small_config(tmp_path)
+    _build_cache_for(config, tmp_path)
+    config.optim.epochs = 1  # completes fully -> resume.pt reflects epoch 2, batch 0
+
+    train(config, verbose=False)
+    resume_path = Path(config.output_dir) / RESUME_NAME
+    assert not resume_path.is_file(), "a fully completed run must not leave a resume file"
+
+
+def test_a_completed_run_asked_to_resume_again_starts_fresh_without_crashing(tmp_path):
+    """No resume.pt exists after a clean finish (see the test above) -- the
+    documented, correct behaviour is a fresh run, not an error."""
+    torch.set_num_threads(1)
+    config = _small_config(tmp_path)
+    _build_cache_for(config, tmp_path)
+
+    first = train(config, verbose=False)
+    second = train(config, verbose=False, resume=True)
+    assert second["selected_epoch"] in (1, 2)
+    assert first["sizes"] == second["sizes"]
 
 
 def test_learning_rate_schedule_warms_up_then_decays():

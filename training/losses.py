@@ -44,12 +44,14 @@ class LossBreakdown:
     total: torch.Tensor
     cross_entropy: torch.Tensor
     dice: torch.Tensor
+    focal: torch.Tensor
 
     def item(self) -> dict[str, float]:
         return {
             "loss": float(self.total.detach()),
             "loss_ce": float(self.cross_entropy.detach()),
             "loss_dice": float(self.dice.detach()),
+            "loss_focal": float(self.focal.detach()),
         }
 
 
@@ -93,14 +95,58 @@ def soft_dice_loss(
     return 1.0 - dice[present].mean()
 
 
+def focal_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    gamma: float = 2.0,
+    ignore_index: int = -100,
+    weight: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Focal loss (Lin et al., 2017, "Focal Loss for Dense Object Detection").
+
+    ``logits`` is NxCxHxW, ``targets`` is NxHxW of class indices. Downweights
+    the loss contribution of pixels the model already assigns high
+    probability to their true class -- background and negative, which
+    dominate every patch here by sheer pixel count -- so gradient is not
+    drowned out by pixels that were never going to be hard.
+
+    The modulating factor ``(1 - p_t)^gamma`` and the optional class weight
+    are computed under ``torch.no_grad()`` and applied as a per-pixel
+    multiplier on the (still-differentiable) plain cross-entropy term --
+    the standard construction, and deliberately so: backpropagating through
+    the modulating factor itself would double-count exactly the effect it
+    exists to apply once.
+    """
+    if logits.ndim != 4:
+        raise ValueError(f"Expected NxCxHxW logits, got {tuple(logits.shape)}")
+    ce = F.cross_entropy(logits, targets, ignore_index=ignore_index, reduction="none")
+    valid = targets != ignore_index
+    if not bool(valid.any()):
+        return logits.sum() * 0.0
+
+    with torch.no_grad():
+        p_t = torch.exp(-ce)
+        focal_term = (1.0 - p_t) ** gamma
+        if weight is not None:
+            # clamp: ignore_index (-100) is not a valid index into `weight`;
+            # the pixels it would touch are dropped by `valid` right after.
+            alpha_t = weight[targets.clamp(min=0)]
+        else:
+            alpha_t = torch.ones_like(p_t)
+
+    return (alpha_t[valid] * focal_term[valid] * ce[valid]).mean()
+
+
 class SegmentationLoss(nn.Module):
-    """Weighted sum of cross-entropy and soft Dice."""
+    """Weighted sum of cross-entropy, soft Dice, and (optionally) focal loss."""
 
     def __init__(self, config, num_classes: int) -> None:
         super().__init__()
         self.num_classes = num_classes
         self.ce_weight = float(config.cross_entropy_weight)
         self.dice_weight = float(config.dice_weight)
+        self.focal_weight = float(getattr(config, "focal_weight", 0.0))
+        self.focal_gamma = float(getattr(config, "focal_gamma", 2.0))
         self.ignore_index = int(config.ignore_index)
         self.dice_smooth = float(config.dice_smooth)
         self.label_smoothing = float(config.label_smoothing)
@@ -148,8 +194,19 @@ class SegmentationLoss(nn.Module):
         else:
             dice = torch.zeros((), device=logits.device, dtype=logits.dtype)
 
-        total = self.ce_weight * ce + self.dice_weight * dice
-        return LossBreakdown(total=total, cross_entropy=ce, dice=dice)
+        if self.focal_weight > 0:
+            focal = focal_loss(
+                logits,
+                targets,
+                gamma=self.focal_gamma,
+                ignore_index=self.ignore_index,
+                weight=self.class_weights,
+            )
+        else:
+            focal = torch.zeros((), device=logits.device, dtype=logits.dtype)
+
+        total = self.ce_weight * ce + self.dice_weight * dice + self.focal_weight * focal
+        return LossBreakdown(total=total, cross_entropy=ce, dice=dice, focal=focal)
 
 
 def inverse_frequency_weights(

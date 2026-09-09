@@ -20,8 +20,8 @@ Two consequences, both of which must survive into Phase 4:
    these targets has demonstrated nothing. The only meaningful comparison is
    against the pathologist-facing labels the dataset does carry (the folder
    score), with the classical thresholder itself carried through as a control.
-   If SegFormer does not beat the thresholder, the honest finding is that it
-   adds nothing.
+   If the segmentation model does not beat the thresholder, the honest
+   finding is that it adds nothing.
 
 2. **A ceiling.** The thresholder cannot be exceeded on its own terms. What a
    learned model can add is spatial coherence -- thresholding is per-pixel and

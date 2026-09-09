@@ -53,9 +53,13 @@ class SplitConfig:
 
 @dataclass
 class ModelConfig:
-    checkpoint: str = "nvidia/segformer-b0-finetuned-ade-512-512"
-    """Base checkpoint. B0 (MiT-B0) is the smallest SegFormer variant, chosen
-    because Phase 2 has to be runnable on CPU."""
+    architecture: str = "unet"
+    """Only "unet" exists. SegFormer was compared against it (PHASE5.md) and
+    removed after losing on every class -- most dramatically moderate (2+):
+    0.589 IoU for U-Net against 0.00006 for SegFormer, identical data/split/
+    epochs. Kept as a named field (rather than deleted) because
+    models.select_architecture is the one dispatch point a future second
+    architecture would register through -- see models/__init__.py."""
 
     num_classes: int = 5
     image_size: int = 512
@@ -66,6 +70,12 @@ class ModelConfig:
     """If False, build from config only. Used by tests so they never touch the
     network."""
 
+    in_channels: int = 4
+    """4 = RGB + DAB optical density, the U-Net's input -- see
+    models/unet_seg.py's module docstring for why that channel exists.
+    training/train.py uses this to decide whether the dataset needs to
+    attach a DAB channel."""
+
 
 @dataclass
 class LossConfig:
@@ -74,6 +84,24 @@ class LossConfig:
     """Dice is on by default. The class distribution here is severely skewed
     -- background and negative dominate every patch -- and plain CE lets a
     model score well while never predicting the strong class at all."""
+
+    focal_weight: float = 0.0
+    """Off by default in the dataclass (so it must be requested explicitly);
+    configs/training.yaml turns this on: focal loss (Lin et al., 2017)
+    downweights the gradient from already-easy,
+    correctly-classified pixels -- background and negative, which dominate
+    every patch by pixel count -- so the rare classes are not drowned out
+    simply because there are so many easy pixels to be right about. This is
+    a different mechanism from Dice (which is insensitive to class
+    cardinality but not to per-pixel difficulty) and from class_weights
+    (which reweights by frequency alone, not by whether the model has
+    already learned the pixel); the three are complementary, not
+    redundant, which is why all three can be on at once."""
+
+    focal_gamma: float = 2.0
+    """Focusing parameter. Higher values downweight easy pixels more
+    aggressively. 2.0 is the value Lin et al. found worked best and is the
+    de facto default in most implementations; not tuned further here."""
 
     # A list of NUM_CLASSES floats, or the string "auto" to derive
     # inverse-frequency weights from the fit set's own pixel counts. "auto" is

@@ -12,7 +12,12 @@ import pytest
 import torch
 
 from training.config import LossConfig
-from training.losses import SegmentationLoss, inverse_frequency_weights, soft_dice_loss
+from training.losses import (
+    SegmentationLoss,
+    focal_loss,
+    inverse_frequency_weights,
+    soft_dice_loss,
+)
 
 NUM_CLASSES = 5
 
@@ -141,6 +146,70 @@ def test_inverse_frequency_weights_favour_the_rare_class():
     weights = inverse_frequency_weights({0: 900, 1: 90, 2: 9, 3: 1, 4: 0}, NUM_CLASSES)
     assert len(weights) == NUM_CLASSES
     assert weights[0] < weights[1] < weights[2] < weights[3] <= weights[4]
+
+
+def test_focal_loss_is_near_zero_for_a_confident_correct_prediction():
+    targets = torch.randint(0, NUM_CLASSES, (2, 8, 8))
+    loss = focal_loss(confident_logits(targets), targets, gamma=2.0)
+    assert loss.item() < 1e-3
+
+
+def test_focal_loss_downweights_easy_pixels_relative_to_plain_cross_entropy():
+    """The property focal loss exists for: at a fixed, middling confidence,
+    its value is strictly smaller than plain cross-entropy's, and the gap
+    grows with gamma -- gamma=0 must recover cross-entropy exactly."""
+    targets = torch.zeros((1, 4, 4), dtype=torch.long)
+    # Confident-but-not-certain logits, so p_t is neither ~0 nor ~1 -- the
+    # regime where the modulating factor actually has room to act.
+    logits = confident_logits(targets, magnitude=2.0)
+
+    ce = torch.nn.functional.cross_entropy(logits, targets)
+    focal_g0 = focal_loss(logits, targets, gamma=0.0)
+    focal_g2 = focal_loss(logits, targets, gamma=2.0)
+    focal_g5 = focal_loss(logits, targets, gamma=5.0)
+
+    assert focal_g0.item() == pytest.approx(ce.item(), rel=1e-5)
+    assert focal_g2.item() < focal_g0.item()
+    assert focal_g5.item() < focal_g2.item()
+
+
+def test_focal_loss_ignores_masked_pixels():
+    targets = torch.zeros((1, 4, 4), dtype=torch.long)
+    logits = confident_logits(targets, magnitude=2.0)
+    baseline = focal_loss(logits, targets, gamma=2.0)
+
+    masked = targets.clone()
+    masked[:, :, 0] = -100
+    corrupted = logits.clone()
+    corrupted[:, :, :, 0] = 0.0
+    corrupted[:, 4, :, 0] = 20.0  # wildly wrong exactly where it is ignored
+
+    assert focal_loss(corrupted, masked, gamma=2.0).item() == pytest.approx(
+        baseline.item(), abs=1e-4
+    )
+
+
+def test_focal_loss_rejects_wrong_logits_shape():
+    with pytest.raises(ValueError, match="NxCxHxW"):
+        focal_loss(torch.randn(1, 8, 8), torch.zeros((1, 8, 8), dtype=torch.long))
+
+
+def test_focal_term_is_skipped_when_its_weight_is_zero():
+    criterion = SegmentationLoss(LossConfig(focal_weight=0.0), NUM_CLASSES)
+    out = criterion(torch.randn(1, NUM_CLASSES, 8, 8), torch.zeros((1, 8, 8), dtype=torch.long))
+    assert out.focal.item() == 0.0
+
+
+def test_focal_term_contributes_to_the_total_when_its_weight_is_positive():
+    config = LossConfig(cross_entropy_weight=1.0, dice_weight=0.0, focal_weight=1.0)
+    criterion = SegmentationLoss(config, NUM_CLASSES)
+    targets = torch.randint(0, NUM_CLASSES, (2, 8, 8))
+    logits = torch.randn(2, NUM_CLASSES, 8, 8)
+
+    out = criterion(logits, targets)
+    assert out.focal.item() > 0.0
+    expected = 1.0 * out.cross_entropy + 1.0 * out.focal
+    assert out.total.item() == pytest.approx(expected.item(), rel=1e-6)
 
 
 def test_an_unresolved_auto_is_refused_rather_than_ignored():

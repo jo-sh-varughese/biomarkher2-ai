@@ -33,6 +33,23 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="torch CPU threads. Defaults to whatever torch picks.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Continue from <output-dir>/resume.pt if present, rather than "
+        "starting over. See training/train.py's module docstring, "
+        "'RESUMING AN INTERRUPTED RUN' -- written for exactly the situation "
+        "a multi-hour CPU run getting killed partway through leaves behind.",
+    )
+    parser.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=20,
+        help="Write the resume checkpoint every N fit batches (default 20). "
+        "Lower it on a machine that gets interrupted often -- more frequent "
+        "checkpoints cost more disk I/O but bound how much work a kill can "
+        "cost to at most this many batches.",
+    )
     return parser.parse_args()
 
 
@@ -56,7 +73,7 @@ def main() -> int:
     if args.threads is not None:
         torch.set_num_threads(args.threads)
 
-    train(config)
+    train(config, resume=args.resume, checkpoint_every=args.checkpoint_every)
     return 0
 
 
