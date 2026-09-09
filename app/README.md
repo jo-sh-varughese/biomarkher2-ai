@@ -4,7 +4,7 @@ A local web viewer for the Phase 2 model, meant to be shown to a pathologist
 and demonstrated in a presentation.
 
 ```
-python -m app.server --run artifacts/phase2_40x
+python -m app.server --run artifacts/phase2_unet
 ```
 
 Then open <http://127.0.0.1:8000>. Standard library only — no Flask, no
@@ -20,11 +20,12 @@ and one table:
 |---|---|
 | Original field | as scanned |
 | Detected tissue | the mask that is the denominator of every percentage |
-| Model intensity map | SegFormer's per-pixel classification |
+| Model intensity map | the model's per-pixel classification (ResNet18-UNet -- see PHASE5.md) |
 | Threshold baseline | the classical DAB rule the model was trained to imitate |
 
 The table gives stained area per intensity class as a percentage of detected
-tissue — **model and baseline side by side, always**.
+tissue — **model and baseline side by side, always**. Click any panel to
+enlarge it (a native `<dialog>`, no library).
 
 ## Three things it does deliberately
 
@@ -41,13 +42,12 @@ rule it was trained to copy, not evidence of accuracy. A viewer that showed
 only the model would hide the one comparison that keeps that honest. The
 disagreement percentage is printed under the table.
 
-**It flags the 2+ row in the table itself.** The current model assigns moderate
-(2+) to essentially nothing (validation IoU 0.0001). That row is shaded and
-annotated inline rather than only footnoted, because a caveat at the foot of
-the page is a caveat that gets cropped out of the screenshot. Run a 3+ field
-and the failure is visible immediately — on
-`test/class_3+/her2-3+-score_train_1120.png` the baseline reports 6.79 % moderate
-and 18.97 % strong where the model reports 0.02 % and 38.53 %.
+**It flags the 2+ row in the table itself.** Moderate (2+) is the class that
+decides reflex FISH testing, and it remains the model's weakest of the four
+stained classes (0.59 validation IoU, versus 0.67–0.89 for the others — see
+PHASE5.md). That row is shaded and annotated inline rather than only
+footnoted, because a caveat at the foot of the page is a caveat that gets
+cropped out of the screenshot.
 
 ## What it is not
 
@@ -65,12 +65,22 @@ Confirmations are appended to `artifacts/reviews.jsonl`, one JSON object per
 line, each carrying the reviewer, their score, the measurements they were
 looking at, a timestamp, and which run produced them. That file is the input
 Phase 4 needs for Cohen's kappa — pathologist score against model measurement,
-on fields a pathologist actually looked at.
+on fields a pathologist actually looked at. See
+`scripts/evaluate_cap_agreement.py` and PHASE4.md.
+
+## Downloading a report
+
+`POST /api/report` takes the same body as `/api/analyze` (either `patch_id`
+or `image`) and streams back a PDF instead of JSON — the same images and
+measurements the page just showed, plus every caveat, nothing more. See
+`app/report.py`; it is built from the identical dict `/api/analyze` returns,
+so it inherits the same guarantee `tests/test_app.py` checks for the live
+API: no score, verdict or diagnosis field, anywhere.
 
 ## Options
 
 ```
---run            run directory containing best.pt   (default artifacts/phase2_40x)
+--run            run directory containing best.pt   (default artifacts/phase2_unet)
 --config         training config                    (default configs/training.yaml)
 --preprocessing  preprocessing config               (default configs/preprocessing.yaml)
 --patch-root     dataset root for the examples      (default data/raw)

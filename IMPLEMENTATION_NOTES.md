@@ -62,11 +62,14 @@ just as a sentence in a document:
 ```
 preprocessing/    Phase 1 — pixel-level image processing, stain math, the classical baseline
 training/         Phase 2 — dataset construction, splits, model, losses, training loop
-models/           the SegFormer wrapper
-app/              the review-viewer frontend (Phase 2's demo surface)
+models/           the ResNet18-UNet wrapper (models/unet_seg.py) + architecture dispatch
+                  (models/__init__.py). A second candidate, SegFormer, was compared against
+                  it at full scale and removed after losing on every class — see PHASE5.md.
+evaluation/       Phase 4 — conformal prediction, stain variation, CAP/ASCO mapping (see PHASE4.md)
+app/              the review-viewer frontend (Phase 2's demo surface), + PDF report export
 configs/          YAML configs — one file fully describes one run
 scripts/          CLI entry points that call into the packages above
-tests/            154+ tests; the project's actual specification in executable form
+tests/            280+ tests; the project's actual specification in executable form
 artifacts/        everything a run produces (not source — regenerable)
 data/             raw dataset + cached pseudo-label targets
 ```
@@ -511,19 +514,16 @@ python scripts/sanity_check_phase1.py
 # Build the pseudo-label cache (native 40x; downsample:1 in configs/preprocessing.yaml)
 python scripts/build_pseudo_labels.py --limit 900 --preview 8
 
-# Train (unweighted baseline)
+# Train
 python scripts/train_phase2.py --config configs/training.yaml
-python scripts/plot_training.py --run artifacts/phase2_40x
-python scripts/predict_preview.py --run artifacts/phase2_40x --count 8
-
-# Train (inverse-frequency class weights, the open experiment)
-python scripts/train_phase2.py --config configs/training_weighted.yaml
+python scripts/plot_training.py --run artifacts/phase2_unet
+python scripts/predict_preview.py --run artifacts/phase2_unet --count 8
 
 # Run everything
 pytest -q
 
 # Launch the reviewer-facing demo
-python -m app.server --run artifacts/phase2_40x
+python -m app.server --run artifacts/phase2_unet
 # then open http://127.0.0.1:8000
 ```
 
@@ -539,23 +539,44 @@ python -m app.server --run artifacts/phase2_40x
 every stage that could silently go wrong); a working, tested Phase 2 training
 pipeline with an honest, documented account of the dataset's real
 limitations (no annotations → pseudo-labels; no slide IDs → an inferred,
-caveated split); a model that went from unable to learn weak or moderate
-staining at all, to genuinely learning weak staining at native resolution; a
-complete, tested, presentable frontend that a pathologist can actually use to
-compare the model against a classical control and record a judgement, with
-the "assistive tool, not autonomous scorer" framing enforced by tests rather
-than only stated in prose.
+caveated split); Phase 4's conformal prediction (including the stain-shift-
+weighted generalization beyond the base paper), stain-variation analysis and
+offline CAP/ASCO mapping; a complete, tested, presentable frontend that a
+pathologist can actually use to compare the model against a classical
+control and record a judgement, with the "assistive tool, not autonomous
+scorer" framing enforced by tests rather than only stated in prose; Docker
+packaging (written, not yet verified — no Docker on the dev machine).
 
-**Open:** the model still cannot predict the moderate (2+) class — the exact
-category that decides reflex FISH testing — and the experiment designed to
-tell rarity-of-class apart from resolution-limit-of-the-decode-head as the
-cause is mid-run, with one epoch of encouraging but not yet conclusive
-evidence. Until that's resolved, any area percentage this tool reports
-under-represents 2+ and over-represents its two neighbours, and the frontend
-says so on every field it analyses rather than letting that slide.
+**The architecture question is resolved.** Phase 2's SegFormer run and a
+later full-scale ResNet18-UNet run were compared head-to-head — identical
+data, split, and epoch count (see PHASE5.md). U-Net won on every single
+class, most dramatically on the class that mattered most: moderate (2+) went
+from an IoU of 0.00006 (SegFormer, effectively never predicted) to 0.589
+(U-Net). SegFormer has been removed from the codebase entirely, not kept
+alongside as a second option — `models/segformer_seg.py` is gone, and
+`models/__init__.py`'s `select_architecture` now recognises only `"unet"`.
+The `transformers`/`tokenizers`/`safetensors`/`hf-xet`/`huggingface_hub`
+dependency footprint that existed only to support SegFormer is gone from
+`requirements.txt` too — a genuine, not just cosmetic, deployment-efficiency
+win (U-Net is plain Conv2d/BatchNorm/ReLU, which exports to ONNX and
+quantizes far more predictably than an attention-based decoder would).
 
-**Explicitly not started:** Phase 3 (whole-slide stitching) and Phase 4
-(held-out evaluation against real pathologist review, Cohen's kappa against
-`reviews.jsonl`) are gated behind Phase 2's resolution and the user's sign-off,
-per the project's own stop-gate structure — nothing past this point has been
-run.
+**Open:** moderate (2+) is resolved as *learnable* (it wasn't, under
+SegFormer; it is, under U-Net) but is still the model's weakest class by a
+real margin — 0.589 IoU against 0.67–0.89 for the other three stained
+classes. 2+ is the exact category that decides reflex FISH testing, so the
+frontend still flags that row inline on every field it analyses, rather than
+treating "no longer near-zero" as "solved." The current best lever on this
+is not another architecture swap but reframing 2+ as a per-cell membrane-
+completeness question rather than a tissue-area intensity question — the
+approach ASCO/CAP itself defines the score by, and the current pixel-area
+measurement approximates. This is planned, not yet built (see the plan file
+this session is executing from).
+
+**Still explicitly not started (at the codebase level):** whole-slide
+stitching (Phase 6 in the plan) and per-cell membrane analysis (Phase 0.5).
+
+**Still blocked on data no engineering effort can substitute for:** real
+pathologist reviews in `reviews.jsonl` (zero real entries exist; see
+`scripts/evaluate_cap_agreement.py`), and the Kottayam slides, still not
+digitized.
