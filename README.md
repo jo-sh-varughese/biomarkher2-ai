@@ -281,7 +281,7 @@ people can work in parallel without stepping on each other:
 | 🖼️ | App & product — whole-slide groundwork, batch reports | [`tasks/person3_app_product.md`](tasks/person3_app_product.md) |
 
 Each brief is written to be handed straight to your own LLM (ChatGPT, Gemini,
-Claude — whatever you're using) as context. See
+or whatever you're using) as context. See
 **[`CONTRIBUTING.md`](CONTRIBUTING.md)** for the branch → commit → PR
 workflow and the rules that are load-bearing rather than style preferences.
 

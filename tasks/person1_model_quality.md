@@ -1,6 +1,6 @@
 # Task brief — Model Quality: closing the moderate (2+) gap
 
-**Give this whole file to your LLM (ChatGPT, Gemini, Claude, whatever you're
+**Give this whole file to your LLM (ChatGPT, Gemini, or whatever you're
 using) as context before you start.** It's written to be self-contained —
 paste it in, tell your LLM "help me do this in the repo at [path/URL]", and
 it should have what it needs.
