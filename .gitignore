@@ -9,3 +9,4 @@ __pycache__/
 configs/paths.yaml
 .claude/
 *.log
+*.aux
