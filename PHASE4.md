@@ -220,6 +220,18 @@ Two things worth knowing before running it:
 docker compose up --build
 ```
 
+**Verification status (2026-09-17):** still not run. No Docker is available
+on this machine (`docker`/`docker compose` not on `PATH`, and there is no
+`winget` or other package manager to install it non-interactively either --
+Docker Desktop's own installer needs interactive administrator elevation,
+which this environment cannot grant itself). Per
+`tasks/person2_evaluation_infra.md` Task 2's own fallback: "if you don't
+have Docker either, say so plainly ... rather than skipping this silently."
+The `Dockerfile`/`docker-compose.yml` themselves are unchanged and were not
+re-reviewed beyond what this document already describes -- whoever picks
+this up next with real Docker access should treat it as still fully open,
+not "probably fine."
+
 ---
 
 ## What is still open

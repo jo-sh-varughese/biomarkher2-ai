@@ -72,8 +72,9 @@ change broke something from "it was already broken."
 
 7. **Open a Pull Request** on GitHub, `yourname/short-topic` → `main`.
    Write a short description: what you did, why, and how you verified it
-   (which tests, which script output). If a CI check is configured (see
-   `tasks/person2_evaluation_infra.md`), wait for it to go green.
+   (which tests, which script output). CI is configured
+   (`.github/workflows/tests.yml`, runs `pytest -q` on every push and PR
+   against `main`) — wait for it to go green before asking for review.
 
 8. **Address review feedback** on the same branch — just push more commits,
    the PR updates automatically.
