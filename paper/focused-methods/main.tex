@@ -3,6 +3,12 @@
 % The preceding line is only needed to identify funding in the first footnote.
 
 \usepackage{cite}
+% IEEEtran switches the body font to Times (ptm) via \rmdefault, but the
+% classic PSNFSS Times metrics have no small-caps face, so the \scshape
+% used by \section silently fell back to plain text ("I. Introduction"
+% instead of true small caps "I. INTRODUCTION"). newtxtext is a modern
+% Times-alike replacement that actually ships a small-caps design.
+\usepackage{newtxtext}
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{algorithmic}
 \usepackage{graphicx}
