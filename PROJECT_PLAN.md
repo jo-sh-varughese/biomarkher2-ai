@@ -76,8 +76,9 @@ Consequences worth internalizing before touching anything:
 | **Phase 4** — `evaluation/` | Conformal prediction (with a stain-shift-weighted extension for cross-institution uncertainty), stain-variation analysis across the dataset's provenance groups, offline ASCO/CAP 2018 score mapping + expert-agreement statistics (Cohen's kappa), PDF report export, Docker packaging. | **Software complete.** Two of its four objectives are only run at smoke scale or have zero real data to evaluate yet — see §5. |
 | **Phase 5** — `models/unet_seg.py` | A second architecture (ResNet18 encoder / U-Net decoder, fed RGB **+ DAB optical density** as a 4th channel) was built and compared head-to-head against the original SegFormer model, same data/split/seed/epochs. | **Done. Decision made:** U-Net won on every class — most dramatically on moderate (2+), IoU 0.589 vs SegFormer's 0.00006. SegFormer has been removed from the codebase entirely, not kept as an option. |
 | **The review-viewer app** — `app/` | A local, dependency-free (standard library only) web app: pick or upload a patch, see the model's prediction next to the classical baseline (always side by side, never one without the other), record a pathologist's confirmed score, export a PDF report. | **Done and demonstrable.** No auth, no TLS — a local demo/review aid, not a deployable clinical service, by design. |
+| **Phase 6 groundwork** — `scripts/build_mock_slide.py`, `scripts/batch_report.py` | Tiling/stitching proven at larger-than-patch scale against synthetic mosaics of real patches, plus a batch/summary report mode and a pathologist-facing user guide (`app/USER_GUIDE.md`). See `PHASE6_NOTES.md`. | **Groundwork done, not real WSI stitching.** Explicitly not a claim that whole-slide stitching itself is finished — see §5. |
 
-**283 tests pass** (`pytest -q`), spanning every phase above. The tests
+**291 tests pass** (`pytest -q`), spanning every phase above. The tests
 aren't just correctness checks — a real category of them (`tests/test_app.py`
 especially) encode the framing rules in §1 as literal assertions, specifically
 because those are the properties a well-intentioned future edit could erode
@@ -96,7 +97,7 @@ Here's the honest state of each:
 | 4 | Patch extraction and patch-level analysis | **Done** — `preprocessing/tiling.py`, and `app/analysis.py` tiles/stitches images of any size |
 | 5 | AI/ML model for intensity classification (weak / moderate / strong) | **Done, one class still weak.** Weak (1+) and strong (3+) are solid (IoU 0.67–0.89); moderate (2+) — the class that decides reflex FISH testing — sits at 0.589. See §5. |
 | 6 | Total tissue area + area % per intensity category | **Done** — reused everywhere (`preprocessing/baseline.py:area_distribution`, the app's table, PDF reports) |
-| 7 | Heatmaps + slide-level quantitative summary reports | **Partial.** Patch-level intensity maps and PDF reports are done. True *slide*-level heatmaps need real WSIs to stitch across — see §5's Phase 6. |
+| 7 | Heatmaps + slide-level quantitative summary reports | **Partial.** Patch-level intensity maps and PDF reports are done, plus a batch/summary report across many patches at once (`scripts/batch_report.py`). Tiling/stitching itself is now proven correct and timed at larger-than-patch scale (`PHASE6_NOTES.md`). True *slide*-level heatmaps still need real WSIs to stitch across — see §5's Phase 6. |
 | 8 | Validation against pathologist annotations (accuracy, kappa) | **Built, tested, zero real data yet.** `evaluation/cap_mapping.py` computes exact/within-one-category agreement and quadratic-weighted Cohen's kappa against `artifacts/reviews.jsonl` — which has zero real entries because no pathologist has used the viewer yet. This is blocked on a person, not on code. |
 | 9 | Integration into a digital pathology workflow as a pre-scoring tool | **Done** — the review-viewer app, with the "assistive, not autonomous" framing enforced by tests, not just prose. |
 
@@ -134,14 +135,15 @@ kinds of effort.
 - **Docker packaging is written but never verified** — no Docker on the
   original dev machine.
 - **No CI** — tests only run when someone remembers to run them locally.
-- **Whole-slide stitching (the project's own "Phase 6") hasn't been started
-  at the codebase level**, but a real chunk of it — tiling and stitching
-  predictions across an image far larger than one patch — can be built and
-  tested *now*, against synthetic mosaics of the existing dataset, without
-  waiting for a real WSI.
-- **The review-viewer** could use a batch/summary report mode (useful for
-  demoing to the Kottayam stakeholder without a live pathologist per image)
-  and a plain-language user guide.
+- **Whole-slide stitching (the project's own "Phase 6") groundwork is now
+  done** — tiling and stitching predictions across an image far larger than
+  one patch is built, tested, and timed against synthetic mosaics of the
+  existing dataset (`PHASE6_NOTES.md`). Real whole-slide stitching itself is
+  still blocked on real WSIs, same as before.
+- **The review-viewer** now has a batch/summary report mode
+  (`scripts/batch_report.py`, useful for demoing to the Kottayam stakeholder
+  without a live pathologist per image) and a plain-language user guide
+  (`app/USER_GUIDE.md`).
 
 These are exactly the items divided across three people in `tasks/` — see
 §7. **Virtual staining is deliberately excluded from this split** (out of
@@ -176,8 +178,8 @@ silently ignoring a typo.
   or an LLM you paste it into — has everything needed to start without
   reading the whole codebase first.
 - **Need the technical detail behind any claim above?** `IMPLEMENTATION_NOTES.md`
-  is the full account; `PHASE2.md`, `PHASE4.md`, `PHASE5.md` are the
-  per-phase deep dives with real numbers.
+  is the full account; `PHASE2.md`, `PHASE4.md`, `PHASE5.md`, `PHASE6_NOTES.md`
+  are the per-phase deep dives with real numbers.
 
 ## 8. Running it yourself
 
