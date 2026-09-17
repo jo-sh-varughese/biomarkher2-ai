@@ -16,6 +16,7 @@ from training.losses import (
     SegmentationLoss,
     focal_loss,
     inverse_frequency_weights,
+    ordinal_distance_loss,
     soft_dice_loss,
 )
 
@@ -209,6 +210,71 @@ def test_focal_term_contributes_to_the_total_when_its_weight_is_positive():
     out = criterion(logits, targets)
     assert out.focal.item() > 0.0
     expected = 1.0 * out.cross_entropy + 1.0 * out.focal
+    assert out.total.item() == pytest.approx(expected.item(), rel=1e-6)
+
+
+def test_ordinal_distance_loss_is_near_zero_for_a_perfect_prediction():
+    targets = torch.randint(0, NUM_CLASSES, (2, 8, 8))
+    loss = ordinal_distance_loss(confident_logits(targets), targets, NUM_CLASSES)
+    assert loss.item() < 1e-3
+
+
+def test_ordinal_distance_loss_costs_more_for_a_two_class_miss_than_a_one_class_miss():
+    """The property this loss exists for: cross-entropy and Dice cost a
+    "predicted weak, true moderate" miss the same as a "predicted background,
+    true moderate" miss. This must not."""
+    targets = torch.full((1, 4, 4), 2, dtype=torch.long)  # true class: weak (1+)
+
+    near_miss = confident_logits(torch.full((1, 4, 4), 3, dtype=torch.long))  # moderate
+    far_miss = confident_logits(torch.full((1, 4, 4), 4, dtype=torch.long))  # strong
+
+    near = ordinal_distance_loss(near_miss, targets, NUM_CLASSES)
+    far = ordinal_distance_loss(far_miss, targets, NUM_CLASSES)
+    assert near.item() < far.item()
+
+    # Cross-entropy, by contrast, does not distinguish a near miss from a far
+    # one at this confidence -- both are "completely wrong, completely sure".
+    ce_near = torch.nn.functional.cross_entropy(near_miss, targets)
+    ce_far = torch.nn.functional.cross_entropy(far_miss, targets)
+    assert ce_near.item() == pytest.approx(ce_far.item(), rel=1e-4)
+
+
+def test_ordinal_distance_loss_ignores_masked_pixels():
+    targets = torch.zeros((1, 4, 4), dtype=torch.long)
+    logits = confident_logits(targets)
+    baseline = ordinal_distance_loss(logits, targets, NUM_CLASSES)
+
+    masked = targets.clone()
+    masked[:, :, 0] = -100
+    corrupted = logits.clone()
+    corrupted[:, :, :, 0] = 0.0
+    corrupted[:, 4, :, 0] = 20.0  # wildly wrong exactly where it is ignored
+
+    assert ordinal_distance_loss(corrupted, masked, NUM_CLASSES).item() == pytest.approx(
+        baseline.item(), abs=1e-4
+    )
+
+
+def test_ordinal_distance_loss_rejects_wrong_logits_shape():
+    with pytest.raises(ValueError, match="NxCxHxW"):
+        ordinal_distance_loss(torch.randn(1, 8, 8), torch.zeros((1, 8, 8), dtype=torch.long), NUM_CLASSES)
+
+
+def test_ordinal_term_is_skipped_when_its_weight_is_zero():
+    criterion = SegmentationLoss(LossConfig(ordinal_weight=0.0), NUM_CLASSES)
+    out = criterion(torch.randn(1, NUM_CLASSES, 8, 8), torch.zeros((1, 8, 8), dtype=torch.long))
+    assert out.ordinal.item() == 0.0
+
+
+def test_ordinal_term_contributes_to_the_total_when_its_weight_is_positive():
+    config = LossConfig(cross_entropy_weight=1.0, dice_weight=0.0, ordinal_weight=0.5)
+    criterion = SegmentationLoss(config, NUM_CLASSES)
+    targets = torch.randint(0, NUM_CLASSES, (2, 8, 8))
+    logits = torch.randn(2, NUM_CLASSES, 8, 8)
+
+    out = criterion(logits, targets)
+    assert out.ordinal.item() > 0.0
+    expected = 1.0 * out.cross_entropy + 0.5 * out.ordinal
     assert out.total.item() == pytest.approx(expected.item(), rel=1e-6)
 
 

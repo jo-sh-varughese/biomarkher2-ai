@@ -35,9 +35,13 @@ BACKGROUND_CLASS = 0
 
 def load_fit_patch_ids(split_path: Path) -> set[str]:
     payload = json.loads(split_path.read_text(encoding="utf-8"))
-    fit = payload.get("fit")
+    # training/splits.py's Split.write() nests the id lists under "patch_ids"
+    # (sibling keys are sizes/class_counts/caveats, not more ids).
+    fit = payload.get("patch_ids", {}).get("fit")
     if fit is None:
-        raise ValueError(f"{split_path} has no 'fit' key -- not a training/splits.py split.json")
+        raise ValueError(
+            f"{split_path} has no patch_ids.fit key -- not a training/splits.py split.json"
+        )
     return set(fit)
 
 

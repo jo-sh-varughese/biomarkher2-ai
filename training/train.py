@@ -92,6 +92,7 @@ EPOCH_LOG_FIELDS = [
     "train_loss_ce",
     "train_loss_dice",
     "train_loss_focal",
+    "train_loss_ordinal",
     "val_loss",
     "val_pixel_accuracy",
     "val_mean_iou",
@@ -248,7 +249,7 @@ def train(
     history: list[dict] = []
     start_epoch = 1
     skip_batches = 0
-    carry_totals = {"loss": 0.0, "loss_ce": 0.0, "loss_dice": 0.0, "loss_focal": 0.0}
+    carry_totals = {"loss": 0.0, "loss_ce": 0.0, "loss_dice": 0.0, "loss_focal": 0.0, "loss_ordinal": 0.0}
     carry_batches = 0
 
     if resume and resume_path.is_file():
@@ -278,7 +279,7 @@ def train(
         started = time.time()
         resuming_this_epoch = epoch == start_epoch and skip_batches > 0
         totals = dict(carry_totals) if resuming_this_epoch else {
-            "loss": 0.0, "loss_ce": 0.0, "loss_dice": 0.0, "loss_focal": 0.0
+            "loss": 0.0, "loss_ce": 0.0, "loss_dice": 0.0, "loss_focal": 0.0, "loss_ordinal": 0.0
         }
         batches = carry_batches if resuming_this_epoch else 0
         skip_remaining = skip_batches if resuming_this_epoch else 0
@@ -355,6 +356,7 @@ def train(
             "train_loss_ce": round(totals["loss_ce"] / max(1, batches), 5),
             "train_loss_dice": round(totals["loss_dice"] / max(1, batches), 5),
             "train_loss_focal": round(totals["loss_focal"] / max(1, batches), 5),
+            "train_loss_ordinal": round(totals["loss_ordinal"] / max(1, batches), 5),
             "val_loss": round(val_loss, 5),
             "val_pixel_accuracy": round(matrix.pixel_accuracy(), 5),
             "val_mean_iou": round(matrix.mean_iou(), 5),
@@ -397,7 +399,7 @@ def train(
         # next epoch rather than replaying the epoch that just finished.
         _write_resume_checkpoint(
             resume_path, epoch + 1, 0, step, model, optimizer, best, history,
-            {"loss": 0.0, "loss_ce": 0.0, "loss_dice": 0.0, "loss_focal": 0.0}, 0,
+            {"loss": 0.0, "loss_ce": 0.0, "loss_dice": 0.0, "loss_focal": 0.0, "loss_ordinal": 0.0}, 0,
         )
 
     # The run finished on its own terms; a resume checkpoint left behind

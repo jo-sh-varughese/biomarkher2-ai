@@ -37,8 +37,15 @@ def _write_manifest(tmp_path, rows):
 
 
 def _write_split(tmp_path, fit_ids):
+    # Mirrors training/splits.py's Split.write() shape: id lists live under
+    # "patch_ids", not at the top level -- an earlier version of this helper
+    # used a flat {"fit": [...]} shape that didn't match the real file, which
+    # is exactly how load_fit_patch_ids's key lookup bug shipped undetected.
     split_path = tmp_path / "split.json"
-    split_path.write_text(json.dumps({"fit": fit_ids, "val": [], "holdout": []}), encoding="utf-8")
+    split_path.write_text(
+        json.dumps({"patch_ids": {"fit": fit_ids, "val": [], "holdout": []}}),
+        encoding="utf-8",
+    )
     return split_path
 
 
