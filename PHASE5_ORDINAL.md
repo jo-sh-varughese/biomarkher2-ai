@@ -103,3 +103,45 @@ structural one: a true ordinal/cumulative-threshold output head
 (CORAL/CORN-style), which by construction cannot hedge between neighbours
 the way this expectation-matching loss did -- higher implementation cost,
 not attempted in this pass.
+
+## Addendum (2026-09-22): the comparison above was not on the same sample
+
+The table above compares this run with the baseline as if only the loss
+differed. It also differed in data. This run trained on 786 tiles and
+validated on 116 (`run_summary.json`); the baseline and class-weighted runs used
+792 and 119. That is because `data/cache/pseudo_labels_40x` gained 3,662 tiles
+between those runs and training samples its 200 patches from whatever is on disk (see
+`IMPLEMENTATION_NOTES.md`, "The training pool is whatever tiles are on disk").
+So the baseline and this run saw a different 30 validation patches, and a
+different 200 training patches.
+
+The validation half of that is separable without retraining: score both
+checkpoints on both validation samples. Per-class IoU, same method as
+`PHASE5_CLASS_WEIGHTS.md`:
+
+| checkpoint | evaluated on | background | negative | weak (1+) | **moderate (2+)** | strong (3+) | tissue mean |
+|---|---|---|---|---|---|---|---|
+| baseline | baseline's 119 tiles | 0.8605 | 0.8388 | 0.6659 | **0.5890** | 0.8912 | 0.7462 |
+| baseline | ordinal's 116 tiles | 0.8697 | 0.8256 | 0.6549 | **0.6152** | 0.9026 | 0.7496 |
+| ordinal | baseline's 119 tiles | 0.8262 | 0.8078 | 0.6972 | **0.5064** | 0.8702 | 0.7204 |
+| ordinal | ordinal's 116 tiles | 0.8392 | 0.8040 | 0.7215 | **0.5255** | 0.8819 | 0.7332 |
+
+(The baseline row on its own sample reproduces its recorded numbers, which is
+the check that this method scores what training scored.)
+
+What it shows:
+
+- **The decision stands, and the moderate gap is larger than reported.** Ordinal
+  minus baseline on moderate is -0.083 on the baseline's sample and -0.090 on
+  the ordinal's, against -0.063 in the table above. The ordinal run's own
+  validation sample happened to be kinder to the baseline (0.615 against 0.589
+  on moderate), which is a measure of how much the choice of 30 validation
+  patches moves this number: about 0.026, the same size as the machine-to-machine
+  spread in `PHASE5_CLASS_WEIGHTS.md`.
+- **The weak (1+) gain is real in direction, not in size.** +0.031 on the
+  baseline's sample and +0.067 on the ordinal's, against +0.056 above. Tissue
+  mean IoU is lower for the ordinal run on both (-0.026, -0.016).
+- **Not separable without retraining:** the different 200 training patches. A
+  moderate deficit of 0.08 to 0.09 is about three times the 0.026 spread seen
+  between validation samples, so it is unlikely to be that alone, but this
+  addendum does not rule it out.

@@ -79,6 +79,34 @@ meaningfully more fit data than 200 patches, since the moderate-specific gain
 at epoch 3 (however marginal) suggests the direction isn't obviously wrong,
 just underpowered at this scale.
 
+## Independent replication on a second machine
+
+Another student re-ran this exact experiment on their own laptop (handoff
+folder `PHASE05_PERSON/`, their own write-up of the same task). Their
+`training_unet_weighted.yaml` is functionally identical to ours -- identical
+once comments and line endings are stripped. Their checkpoint and logs are not
+in this repository, so the numbers below are **as they reported them, not
+re-verified here**. (They also had no baseline artifacts, so they compared
+against the documented baseline numbers rather than re-training one.)
+
+| class | this run | replication | replication - this run |
+|---|---|---|---|
+| background | 0.8095 | 0.8219 | +0.012 |
+| negative | 0.7339 | 0.7093 | -0.025 |
+| weak (1+) | 0.5263 | 0.5526 | +0.026 |
+| **moderate (2+)** | **0.5911** | **0.5873** | **-0.004** |
+| strong (3+) | 0.8498 | 0.8531 | +0.003 |
+| tissue mean IoU | 0.6753 | 0.6756 | +0.000 |
+| pixel accuracy | 0.8574 | 0.8553 | -0.002 |
+
+Same decision from both: moderate is flat against baseline (0.5873 there, 0.591
+here, versus 0.589) and the other classes are lower. The replication changes
+nothing above; what it adds is a direct measurement of this protocol's
+run-to-run noise. Moderate agreed to within 0.004 across the two runs, but
+individual classes moved by up to 0.026 between them (weak, negative). Their
+write-up treats a 0.02 IoU change as "meaningful"; on the evidence of these two
+runs alone that is inside the noise for a single class.
+
 ## Note: this uses the config machinery, no new code
 
 `training/losses.py` and `training/train.py:resolve_class_weights` were

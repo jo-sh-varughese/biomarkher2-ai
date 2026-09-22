@@ -123,12 +123,22 @@ kinds of effort.
 
 ### 5b. Buildable now — this is the pool the team divides
 
-- **Moderate (2+) is still the model's weakest class** (IoU 0.589 vs
-  0.67–0.89 for the others), and it's the exact category that decides reflex
-  FISH testing. Untried levers: inverse-frequency class loss weighting with
-  the new U-Net (the code supports it, no run has been done), and a
-  sensitivity check on the classical threshold cut-points that define the
-  class in the first place.
+- **Moderate (2+) was the model's weakest class at the 4-epoch baseline**
+  (IoU 0.589 vs 0.67–0.89 for the others), the exact category that decides
+  reflex FISH testing. Three levers have since been tried, honestly, with a
+  decision rule fixed before each result: inverse-frequency class weighting
+  (`PHASE5_CLASS_WEIGHTS.md`, **rejected** — moderate flat, other classes
+  regressed), an ordinal-distance auxiliary loss (`PHASE5_ORDINAL.md`,
+  **rejected** — moderate worse), and training for 8 instead of 4 epochs
+  (`PHASE5_8EPOCHS.md`, **adopted** — moderate 0.589 → 0.657, every class
+  improved). Adopting the 8-epoch result as the actual default (updating
+  `configs/training.yaml` and retraining into `artifacts/phase2_unet`) is a
+  deliberately deferred follow-up, not done yet — see that file's own "What
+  adopting this means, not yet done". A DAB-threshold sensitivity sweep
+  (`PHASE5_THRESHOLD_SENSITIVITY.md`) found the pixel-share of moderate is
+  highly sensitive to the cut point, but no model has been trained on a
+  threshold variant yet — that run (`configs/training_moderate_042.yaml`) is
+  also queued, not run.
 - **Phase 4's conformal calibration has only been run at smoke scale**
   (40 patches) — a full run over the ~1,900-patch reserved holdout is
   software-ready but unrun (multi-hour CPU job).

@@ -15,4 +15,11 @@ answers three questions Phase 2 deliberately left open:
 
 See PHASE4.md for how these compose into a run, and why the CAP/ASCO mapping
 is not, and must not become, a field in the live viewer's API.
+
+Phase 5 adds one exploratory module, :mod:`evaluation.membrane_completeness`:
+an offline morphology proxy for membrane completeness over the DAB mask,
+compared against the model's moderate (2+) errors by
+``scripts/evaluate_membrane_completeness.py``. It carries the same rule as the
+CAP/ASCO mapping: never imported under app/, never a field in the live API.
+See PHASE5_MEMBRANE_COMPLETENESS.md.
 """

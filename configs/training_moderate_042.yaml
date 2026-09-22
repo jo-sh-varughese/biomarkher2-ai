@@ -41,7 +41,12 @@ optim:
 
 data:
   patch_root: data/raw
-  cache_root: data/cache/pseudo_labels_40x_moderate_042
+  # The _orig subset, not the full 10,543-tile variant cache: training samples
+  # its 200 patches from whatever is on disk, and the full cache would draw a
+  # different sample than the baseline did. This is the same 898 patches the
+  # baseline pool has, so fit/val are the baseline's 792/119 tiles with only the
+  # labels differing (scripts/subset_pseudo_label_cache.py).
+  cache_root: data/cache/pseudo_labels_40x_moderate_042_orig
   max_fit_patches: 200
   max_val_patches: 30
   max_holdout_patches: 200

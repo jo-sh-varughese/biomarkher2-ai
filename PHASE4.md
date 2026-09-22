@@ -56,7 +56,18 @@ distance 0.4230 vs. within-group mean spread 0.2802 —
 `variation_exceeds_noise: true`. `artifacts/phase4/stain_variation.json` /
 `.png`.
 
-**Read this result carefully before quoting it.** `training/splits.py`
+**Larger sample** (100 patches per group, 800 in all, same seed): between-group
+mean distance 0.4087 vs. within-group mean spread 0.2788,
+`variation_exceeds_noise: true`. The ratio of the two barely moves, 1.51 at 25
+per group and 1.47 at 100, so the larger sample confirms the smaller one and
+does not strengthen it. `python scripts/stain_variation_report.py --per-group
+100 --out artifacts/phase4/stain_variation_100.json` writes it (`--out` is a
+directory, hence the directory called `stain_variation_100.json` holding the
+report). The report was first produced on 2026-09-17 but not written up; it was
+re-run on 2026-09-22 and came out byte-identical.
+
+**Read this result carefully before quoting it.** The confound below applies
+to both sample sizes equally, and a larger sample does not weaken it. `training/splits.py`
 already establishes that these 8 groups are confounded with HER2 score
 (`her2-3+-score` groups are, by definition, more heavily DAB-stained than
 `her2-0-score` groups). A 6-dimensional stain descriptor built from
