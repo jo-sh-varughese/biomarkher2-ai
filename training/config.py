@@ -115,6 +115,19 @@ class LossConfig:
     label_smoothing: float = 0.0
     dice_smooth: float = 1.0
 
+    ordinal_weight: float = 0.0
+    """Off by default. Weight on an auxiliary loss (training.losses
+    .ordinal_distance_loss) that treats the five classes as ordered bins of
+    one continuous DAB optical-density value, not five unrelated visual
+    categories -- background < negative < weak < moderate < strong is the
+    order the classes were thresholded from in the first place (see
+    preprocessing/baseline.py). Plain cross-entropy and Dice cost the same
+    for "predicted weak, true moderate" as for "predicted background, true
+    moderate"; this term does not. See PHASE5_ORDINAL.md for why this was
+    tried -- the confusion matrix that motivated it showed close to 100% of
+    moderate's, weak's, and strong's errors landing on their immediate
+    ordinal neighbour."""
+
 
 @dataclass
 class OptimConfig:

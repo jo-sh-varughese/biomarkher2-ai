@@ -300,6 +300,37 @@ densities the classes are defined on (mislabelling the augmented pair) or
 require interpolating the label map (inventing classes that were never
 assigned).
 
+### The training pool is whatever tiles are on disk
+
+`training/train.py` caps its fit and validation samples with
+`stratified_subsample`, and draws that sample from the patches that have tiles
+in the cache directory *at that moment*. A cache that grows between two runs
+therefore changes which 200 patches the second run trains on, with the same
+seed, split and config. That happened here. `data/cache/pseudo_labels_40x` was
+built on 2026-08-06 with 3,526 tiles (898 patches; `manifest.csv` and
+`tiles.json` describe exactly that) and gained 3,662 more on 2026-09-17,
+without those two files being rewritten. The baseline and class-weighted runs
+train on 792 tiles and validate on 119. The ordinal run, started after the
+growth, trained on 786 and validated on 116: a different 200 patches and a
+different 30 validation patches (PHASE5_ORDINAL.md says what that does to its
+comparison).
+
+The check is one log line: `fit: 200 patches -> 792 tiles` for anything meant
+to be compared with the baseline. To keep a run on the original pool, point its
+`data.cache_root` at a subset built by `scripts/subset_pseudo_label_cache.py`.
+`data/cache/pseudo_labels_40x_orig` reproduces the baseline sample exactly, down
+to the class weights (identical to six decimals to those the weighted run
+computed). New tiles go into a cache of their own, never into a training cache
+(`scripts/build_conformal_test_cache.py` refuses to).
+
+The same mechanism has a second consequence. `scripts/build_pseudo_labels.py`
+and `evaluation/calibration_split.py` both draw from the holdout with the same
+seed, so they walk the same per-class permutation: the builder keeps the first
+few of each class and the calibration half is the first half. The cache's
+holdout patches are therefore almost exactly the calibration half (285 in it,
+13 in the test half), which is why conformal evaluation only ever had 52 test
+tiles.
+
 ### Run 1 — effective 20× (the failure that set the direction)
 
 500 fit / 120 val patches, 4 epochs, CPU-only. **Weak (1+) and moderate (2+)
@@ -561,17 +592,29 @@ dependency footprint that existed only to support SegFormer is gone from
 win (U-Net is plain Conv2d/BatchNorm/ReLU, which exports to ONNX and
 quantizes far more predictably than an attention-based decoder would).
 
-**Open:** moderate (2+) is resolved as *learnable* (it wasn't, under
-SegFormer; it is, under U-Net) but is still the model's weakest class by a
-real margin — 0.589 IoU against 0.67–0.89 for the other three stained
-classes. 2+ is the exact category that decides reflex FISH testing, so the
-frontend still flags that row inline on every field it analyses, rather than
-treating "no longer near-zero" as "solved." The current best lever on this
-is not another architecture swap but reframing 2+ as a per-cell membrane-
-completeness question rather than a tissue-area intensity question — the
-approach ASCO/CAP itself defines the score by, and the current pixel-area
-measurement approximates. This is planned, not yet built (see the plan file
-this session is executing from).
+**Open, updated 2026-09-22:** moderate (2+) is resolved as *learnable* (it
+wasn't, under SegFormer; it is, under U-Net). At the 4-epoch baseline it was
+still the model's weakest class by a real margin — 0.589 IoU against
+0.67–0.89 for the other three stained classes — and three cheap levers were
+tried against it, each with a decision rule fixed before the result: inverse-
+frequency class weighting (`PHASE5_CLASS_WEIGHTS.md`, rejected), an ordinal-
+distance auxiliary loss (`PHASE5_ORDINAL.md`, rejected), and training for 8
+instead of 4 epochs (`PHASE5_8EPOCHS.md`, **adopted** — moderate 0.589 →
+0.657, every class improved, no regression elsewhere). Making that the actual
+shipped default (`configs/training.yaml`, `artifacts/phase2_unet`) is a
+deferred follow-up, not done yet. The frontend still flags the moderate row
+inline regardless, rather than treating any of this as "solved."
+
+Reframing 2+ as a per-cell membrane-completeness question rather than a
+tissue-area intensity question — the approach ASCO/CAP itself defines the
+score by — was prototyped as an offline, evaluation-only script
+(`scripts/evaluate_membrane_completeness.py`, `PHASE5_MEMBRANE_COMPLETENESS.md`).
+The honest result is mostly negative: about a third of validation tiles have
+no moderate class at all and are scored IoU 0.0, and that mechanical fact,
+not genuine model behaviour, produced most of the proxy's apparent
+correlation with moderate IoU; on tiles where moderate is actually present
+the correlation is near zero or negative. Not wired into the app, per the
+"no score in the live app" rule.
 
 **Still explicitly not started (at the codebase level):** whole-slide
 stitching (Phase 6 in the plan) and per-cell membrane analysis (Phase 0.5).

@@ -33,6 +33,7 @@ from evaluation.conformal import (
     hinge_scores,
 )
 from evaluation.stain_shift import patch_stain_descriptor
+from evaluation.streaming import ScoreReservoir
 from models import prepare_pixel_array, select_architecture
 from preprocessing.baseline import NUM_CLASSES
 from preprocessing.sources import DirectoryPatchSource
@@ -85,20 +86,32 @@ def collect_calibration_scores(
     cache: PseudoLabelCache,
     tile_ids: list[str],
     device: str,
-) -> tuple[dict[int, list[float]], dict[int, list[np.ndarray]]]:
+    max_per_class: int | None = None,
+    seed: int = 0,
+) -> tuple[dict[int, ScoreReservoir], list[np.ndarray]]:
     """Per-tissue-pixel nonconformity scores, plus one stain descriptor per tile.
 
     Every tissue pixel of a tile contributes its hinge score for ITS OWN
-    pseudo-label class to that class's list, paired with that tile's single
-    stain descriptor -- matching evaluation.conformal's calibration contract
-    of "one stain descriptor per calibration score, from the patch that
-    pixel came from". A tile's tissue mask is exactly ``label != 0``: the
-    background class already IS the tissue detector's own output, baked into
-    the cached pseudo-label at build time (see training/pseudo_labels.py),
-    so it is read back rather than recomputed.
+    pseudo-label class to that class's :class:`ScoreReservoir`, tagged with the
+    index of its tile in the returned descriptor list -- matching
+    evaluation.conformal's calibration contract of "one stain descriptor per
+    calibration score, from the patch that pixel came from". A tile's tissue
+    mask is exactly ``label != 0``: the background class already IS the tissue
+    detector's own output, baked into the cached pseudo-label at build time
+    (see training/pseudo_labels.py), so it is read back rather than recomputed.
+
+    ``max_per_class`` bounds memory while collecting, not just afterwards. The
+    earlier version appended every pixel of every tile to Python lists and
+    applied ``--max-per-class`` at the end, which is roughly 40 bytes per pixel
+    held: fine for 1,100 tiles, about 30 GB for a full calibration half. The
+    reservoir keeps a uniform sample without replacement, the same
+    distribution the after-the-fact ``rng.choice`` produced. ``None`` keeps
+    every pixel.
     """
-    scores_by_class: dict[int, list[float]] = {c: [] for c in range(1, NUM_CLASSES)}
-    descriptors_by_class: dict[int, list[np.ndarray]] = {c: [] for c in range(1, NUM_CLASSES)}
+    reservoirs = {
+        c: ScoreReservoir(max_per_class, seed + c) for c in range(1, NUM_CLASSES)
+    }
+    descriptor_table: list[np.ndarray] = []
 
     model.eval()
     with torch.no_grad():
@@ -124,18 +137,17 @@ def collect_calibration_scores(
             tissue_labels = label[tissue]
             scores = hinge_scores(tissue_probs)
 
+            descriptor_table.append(descriptor)
+            owner = len(descriptor_table) - 1
             for true_class in range(1, NUM_CLASSES):
                 member = tissue_labels == true_class
-                count = int(member.sum())
-                if not count:
-                    continue
-                scores_by_class[true_class].extend(scores[member, true_class].tolist())
-                descriptors_by_class[true_class].extend([descriptor] * count)
+                if member.any():
+                    reservoirs[true_class].add(scores[member, true_class], owner)
 
             if index % 50 == 0 or index == len(tile_ids):
                 print(f"  [{index}/{len(tile_ids)}] {tile_id}", flush=True)
 
-    return scores_by_class, descriptors_by_class
+    return reservoirs, descriptor_table
 
 
 def main() -> int:
@@ -189,28 +201,32 @@ def main() -> int:
     print(f"CAVEAT: {HOLDOUT_SPLIT_CAVEAT}")
     print(f"CAVEAT: {PSEUDO_LABEL_CALIBRATION_CAVEAT}\n")
 
-    scores_by_class, descriptors_by_class = collect_calibration_scores(
-        model, normalize_batch, config.model.in_channels, cache, calibration_tiles, device
+    reservoirs, descriptor_table = collect_calibration_scores(
+        model,
+        normalize_batch,
+        config.model.in_channels,
+        cache,
+        calibration_tiles,
+        device,
+        max_per_class=args.max_per_class or None,
+        seed=config.seed,
     )
 
-    rng = np.random.default_rng(config.seed)
+    descriptors_by_tile = np.asarray(descriptor_table, dtype=np.float32)
     payload: dict[str, np.ndarray] = {}
     for c in range(1, NUM_CLASSES):
-        if not scores_by_class[c]:
+        scores, owners = reservoirs[c].result()
+        if scores.size == 0:
             print(
                 f"WARNING: class {c} has zero calibration pixels; prediction "
                 "sets will never exclude it (see evaluation.conformal.ClassCalibration)."
             )
             continue
-        scores = np.asarray(scores_by_class[c], dtype=np.float32)
-        descriptors = np.asarray(descriptors_by_class[c], dtype=np.float32)
-        if args.max_per_class and scores.shape[0] > args.max_per_class:
-            keep = rng.choice(scores.shape[0], size=args.max_per_class, replace=False)
-            scores, descriptors = scores[keep], descriptors[keep]
-            print(f"class {c}: subsampled to {args.max_per_class} calibration pixels "
-                  f"(of {len(scores_by_class[c])} collected)")
-        payload[f"scores_{c}"] = scores
-        payload[f"descriptors_{c}"] = descriptors
+        if reservoirs[c].capacity is not None and reservoirs[c].seen > reservoirs[c].capacity:
+            print(f"class {c}: subsampled to {reservoirs[c].capacity} calibration pixels "
+                  f"(of {reservoirs[c].seen} collected)")
+        payload[f"scores_{c}"] = scores.astype(np.float32)
+        payload[f"descriptors_{c}"] = descriptors_by_tile[owners]
 
     calibration_path = out_dir / "conformal_calibration.npz"
     np.savez_compressed(calibration_path, **payload)

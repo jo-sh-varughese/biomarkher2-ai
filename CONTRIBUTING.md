@@ -23,8 +23,8 @@ cd biomarkher2-ai
 python -m venv .venv
 .venv\Scripts\activate            # Windows;  source .venv/bin/activate on Mac/Linux
 pip install -r requirements.txt
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pytest -q                         # must show "283 passed" before you touch anything
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pytest -q                         # must show all tests passed before you touch anything
 ```
 
 If `pytest` doesn't pass cleanly on a fresh clone, stop and say so rather than
@@ -72,8 +72,9 @@ change broke something from "it was already broken."
 
 7. **Open a Pull Request** on GitHub, `yourname/short-topic` → `main`.
    Write a short description: what you did, why, and how you verified it
-   (which tests, which script output). If a CI check is configured (see
-   `tasks/person2_evaluation_infra.md`), wait for it to go green.
+   (which tests, which script output). CI is configured
+   (`.github/workflows/tests.yml`, runs `pytest -q` on every push and PR
+   against `main`) — wait for it to go green before asking for review.
 
 8. **Address review feedback** on the same branch — just push more commits,
    the PR updates automatically.

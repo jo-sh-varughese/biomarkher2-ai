@@ -1,0 +1,34 @@
+# Threshold-sensitivity variant of configs/preprocessing.yaml -- widens the
+# moderate (2+) band by lowering dab_od_moderate from 0.50 to 0.42 (band
+# width 0.30 -> 0.38). Everything else is identical to the baseline. See
+# tasks/person1_model_quality.md Task 2 and PHASE5_CLASS_WEIGHTS.md.
+
+tissue:
+  method: od
+  od_floor: 0.04
+  otsu_od_ceiling: 0.15
+  achromatic_floor: 0.02
+  saturation_floor: 0.05
+  value_ceiling: 0.94
+  value_floor: 0.06
+  min_object_area: 512
+  min_hole_area: 512
+  morph_radius: 3
+  use_otsu: false
+
+stain:
+  normalization: none
+  background_intensity: 255.0
+  macenko_alpha: 1.0
+  macenko_beta: 0.15
+
+  dab_od_weak: 0.25
+  dab_od_moderate: 0.42        # baseline: 0.50 -- widened, more modestly than 0.35
+  dab_od_strong: 0.80
+
+tiling:
+  patch_size: 512
+  overlap: 0
+  downsample: 1
+  min_tissue_fraction: 0.10
+  drop_partial: true

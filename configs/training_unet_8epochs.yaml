@@ -1,0 +1,67 @@
+# BioMarkHER2 -- plain baseline protocol, run for 8 epochs instead of 4.
+#
+# Identical to configs/training.yaml (the baseline) in every other respect.
+# PHASE5.md notes moderate's IoU was "still rising at epoch 4, more epochs
+# may help further, not yet tested" -- this is that test. See
+# PHASE5_ORDINAL.md for the two experiments (class weighting, ordinal loss)
+# that were tried and rejected before this one.
+#
+# DECISION RULE, fixed before the run: adopt 8 epochs as the default protocol
+# only if moderate (2+) IoU reaches 0.62 or more (baseline 0.589, plus 0.03,
+# the smallest gain that clears the ~0.026 single-class run-to-run spread seen
+# between two machines in PHASE5_CLASS_WEIGHTS.md) AND tissue mean IoU stays
+# within 0.02 of baseline (0.746, so 0.726 or more). Otherwise keep 4 epochs.
+# Same validation protocol and best-epoch criterion (tissue mean IoU) as the
+# baseline, so the numbers are comparable.
+
+split:
+  holdout_by: filename_origin
+  holdout_value: test
+  val_fraction: 0.15
+  stratify: true
+  seed: 20260805
+  require_all_classes: true
+
+model:
+  architecture: unet
+  num_classes: 5
+  image_size: 512
+  pretrained: true
+  in_channels: 4
+
+loss:
+  cross_entropy_weight: 1.0
+  dice_weight: 0.5
+  focal_weight: 1.0
+  focal_gamma: 2.0
+  class_weights: null
+  ordinal_weight: 0.0
+  ignore_index: -100
+  label_smoothing: 0.0
+  dice_smooth: 1.0
+
+optim:
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  epochs: 8            # the one change
+  batch_size: 2
+  grad_accum_steps: 4
+  warmup_fraction: 0.05
+  max_grad_norm: 1.0
+  num_workers: 0
+
+data:
+  patch_root: data/raw
+  # Not pseudo_labels_40x itself: that directory gained 3,662 tiles on 2026-09-17
+  # and training samples its 200 patches from whatever is on disk, so it would
+  # draw a different sample than the baseline did (786 fit tiles, not 792). This
+  # subset is the original 3,526-tile pool; it reproduces the baseline's sample
+  # exactly (built by scripts/subset_pseudo_label_cache.py).
+  cache_root: data/cache/pseudo_labels_40x_orig
+  max_fit_patches: 200
+  max_val_patches: 30
+  max_holdout_patches: 200
+  augment: true
+
+output_dir: artifacts/phase2_unet_8epochs   # the other change
+seed: 20260805

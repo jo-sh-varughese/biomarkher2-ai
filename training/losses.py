@@ -45,6 +45,7 @@ class LossBreakdown:
     cross_entropy: torch.Tensor
     dice: torch.Tensor
     focal: torch.Tensor
+    ordinal: torch.Tensor
 
     def item(self) -> dict[str, float]:
         return {
@@ -52,6 +53,7 @@ class LossBreakdown:
             "loss_ce": float(self.cross_entropy.detach()),
             "loss_dice": float(self.dice.detach()),
             "loss_focal": float(self.focal.detach()),
+            "loss_ordinal": float(self.ordinal.detach()),
         }
 
 
@@ -137,6 +139,47 @@ def focal_loss(
     return (alpha_t[valid] * focal_term[valid] * ce[valid]).mean()
 
 
+def ordinal_distance_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    num_classes: int,
+    ignore_index: int = -100,
+) -> torch.Tensor:
+    """Mean squared distance between the softmax's expected class index and
+    the true class index.
+
+    The five classes here are not five unrelated visual categories: they are
+    bins of one continuous DAB optical-density value, cut at three fixed
+    thresholds (see preprocessing/baseline.py). Categorical cross-entropy and
+    Dice cost exactly the same for "predicted weak, true moderate" as for
+    "predicted background, true moderate" -- they cannot see that one of
+    those predictions is a near miss and the other is not. This adds a soft,
+    differentiable pressure toward the correct position on that scale without
+    touching the model's output shape at all: still ``num_classes`` logits,
+    softmax and argmax elsewhere are unchanged.
+
+    ``expected = sum_c c * softmax(logits)_c`` is the predicted distribution's
+    own mean over class *indices* (0..num_classes-1); squaring its distance
+    from the true index costs a two-class miss 4x what a one-class miss
+    costs, and costs nothing extra for spreading probability mass between
+    classes adjacent to the true one -- both properties plain cross-entropy
+    lacks.
+    """
+    if logits.ndim != 4:
+        raise ValueError(f"Expected NxCxHxW logits, got {tuple(logits.shape)}")
+    valid = targets != ignore_index
+    if not bool(valid.any()):
+        return logits.sum() * 0.0
+
+    probs = logits.softmax(dim=1)
+    class_index = torch.arange(num_classes, device=logits.device, dtype=probs.dtype)
+    expected = (probs * class_index.view(1, num_classes, 1, 1)).sum(dim=1)
+
+    safe_targets = torch.where(valid, targets, torch.zeros_like(targets))
+    distance_sq = (expected - safe_targets.to(expected.dtype)) ** 2
+    return distance_sq[valid].mean()
+
+
 class SegmentationLoss(nn.Module):
     """Weighted sum of cross-entropy, soft Dice, and (optionally) focal loss."""
 
@@ -147,6 +190,7 @@ class SegmentationLoss(nn.Module):
         self.dice_weight = float(config.dice_weight)
         self.focal_weight = float(getattr(config, "focal_weight", 0.0))
         self.focal_gamma = float(getattr(config, "focal_gamma", 2.0))
+        self.ordinal_weight = float(getattr(config, "ordinal_weight", 0.0))
         self.ignore_index = int(config.ignore_index)
         self.dice_smooth = float(config.dice_smooth)
         self.label_smoothing = float(config.label_smoothing)
@@ -205,8 +249,20 @@ class SegmentationLoss(nn.Module):
         else:
             focal = torch.zeros((), device=logits.device, dtype=logits.dtype)
 
-        total = self.ce_weight * ce + self.dice_weight * dice + self.focal_weight * focal
-        return LossBreakdown(total=total, cross_entropy=ce, dice=dice, focal=focal)
+        if self.ordinal_weight > 0:
+            ordinal = ordinal_distance_loss(
+                logits, targets, num_classes=self.num_classes, ignore_index=self.ignore_index
+            )
+        else:
+            ordinal = torch.zeros((), device=logits.device, dtype=logits.dtype)
+
+        total = (
+            self.ce_weight * ce
+            + self.dice_weight * dice
+            + self.focal_weight * focal
+            + self.ordinal_weight * ordinal
+        )
+        return LossBreakdown(total=total, cross_entropy=ce, dice=dice, focal=focal, ordinal=ordinal)
 
 
 def inverse_frequency_weights(

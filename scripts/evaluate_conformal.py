@@ -40,11 +40,11 @@ from evaluation.conformal import (
     ConformalCalibrator,
     aggregate_patch_status_from_mask,
     evaluate_patch_statuses,
-    evaluate_prediction_mask,
     hinge_scores,
     prediction_mask,
 )
 from evaluation.stain_shift import median_bandwidth, patch_stain_descriptor
+from evaluation.streaming import PixelCounts
 from models import prepare_pixel_array, select_architecture
 from preprocessing.baseline import NUM_CLASSES
 from preprocessing.sources import DirectoryPatchSource
@@ -72,6 +72,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", default="artifacts/phase2_unet")
     parser.add_argument("--config", default="configs/training.yaml")
+    parser.add_argument(
+        "--cache",
+        default=None,
+        help="Pseudo-label cache to read TEST tiles from. Default: the config's "
+        "data.cache_root, which holds only 13 of the 953 test-half patches "
+        "(see scripts/build_conformal_test_cache.py for why, and for building "
+        "the rest into a cache of its own).",
+    )
     parser.add_argument(
         "--max-patches",
         type=int,
@@ -124,9 +132,14 @@ def collect_test_tiles(
     return [t for pid in kept for t in cache.tile_ids(pid)]
 
 
-def run_inference(model, normalize_batch, in_channels, cache, tile_ids, device):
-    """One inference pass per tile, reused across every alpha in the grid."""
-    per_tile = []
+def iter_test_tiles(model, normalize_batch, in_channels, cache, tile_ids, device):
+    """Yield one tile's scores, true labels and stain descriptor at a time.
+
+    A generator, not a list: a tile's float64 scores for all five classes are
+    about 8 MB, so keeping every tile of the full test half in memory would
+    take roughly 30 GB. Each tile is scored once here and evaluated at every
+    alpha by :func:`stream_evaluation` before the next one is read.
+    """
     model.eval()
     with torch.no_grad():
         for index, tile_id in enumerate(tile_ids, start=1):
@@ -144,61 +157,70 @@ def run_inference(model, normalize_batch, in_channels, cache, tile_ids, device):
             pixels = pixels.permute(2, 0, 1).float()[None].to(device)
             logits = model(normalize_batch(pixels))
             probs = logits.softmax(dim=1)[0].permute(1, 2, 0).cpu().numpy()
-            per_tile.append(
-                {
-                    "scores": hinge_scores(probs[tissue]),
-                    "true": label[tissue],
-                    "descriptor": descriptor,
-                }
-            )
+            yield {
+                "scores": hinge_scores(probs[tissue]),
+                "true": label[tissue],
+                "descriptor": descriptor,
+            }
             if index % 50 == 0 or index == len(tile_ids):
                 print(f"  [{index}/{len(tile_ids)}] {tile_id}", flush=True)
-    return per_tile
 
 
-def evaluate_alpha(calibrator, bandwidth, per_tile, alpha, weighted):
-    """Metrics at one significance level, for one of the two predictors.
+def stream_evaluation(calibrator, bandwidth, tiles, alphas):
+    """Metrics at every (alpha, weighted) cell, from ONE pass over the tiles.
 
-    Two things keep this tractable at real dataset scale -- a single
-    512x512 tile can carry a few hundred thousand tissue pixels, and this
-    runs once per (alpha, weighted) combination:
+    Returns ``({(alpha, weighted): (pixel_metrics, patch_metrics)}, n_tiles)``.
 
-    1. The unweighted quantile does not depend on the test tile at all, so
-       it is computed once per class here, not once per (class, tile).
-    2. Prediction-set MEMBERSHIP is computed as a numpy boolean mask
-       (:func:`evaluation.conformal.prediction_mask`), never as a Python
-       ``set`` per pixel. Building millions of ``set`` objects in a Python
-       loop -- one earlier version of this function did exactly that -- was
-       the actual bottleneck the first time this script ran end to end: see
-       PHASE4.md.
+    Two things keep this tractable at real dataset scale -- a single 512x512
+    tile can carry a few hundred thousand tissue pixels, and every tile is
+    scored at every (alpha, weighted) combination:
+
+    1. Prediction-set MEMBERSHIP is a numpy boolean mask
+       (:func:`evaluation.conformal.prediction_mask`), never a Python ``set``
+       per pixel. Building millions of ``set`` objects in a Python loop -- one
+       earlier version of this script did exactly that -- was the actual
+       bottleneck the first time it ran end to end: see PHASE4.md.
+    2. Nothing per-pixel outlives its tile. Each tile's mask is reduced to
+       :class:`evaluation.streaming.PixelCounts` (which add) and one
+       patch-level status, then dropped. The earlier version concatenated
+       every tile's mask per cell, which is what capped it at smoke scale.
+       The unweighted quantiles do not depend on the tile, so they are
+       computed once per alpha, not once per tile.
     """
-    plain_quantiles = None
-    if not weighted:
-        plain_quantiles = {c: calib.quantile(alpha) for c, calib in calibrator.by_class.items()}
+    plain = {
+        alpha: {c: calib.quantile(alpha) for c, calib in calibrator.by_class.items()}
+        for alpha in alphas
+    }
+    cells = [(alpha, weighted) for alpha in alphas for weighted in (False, True)]
+    pixels = {cell: PixelCounts() for cell in cells}
+    statuses: dict[tuple, list] = {cell: [] for cell in cells}
+    patch_true: list[int] = []
 
-    pixel_masks, true_all, patch_statuses, patch_true = [], [], [], []
-    for tile in per_tile:
-        quantiles = (
-            plain_quantiles
-            if plain_quantiles is not None
-            else {
-                c: calib.quantile(alpha, test_descriptor=tile["descriptor"], bandwidth=bandwidth)
-                for c, calib in calibrator.by_class.items()
-            }
-        )
-        mask = prediction_mask(tile["scores"], quantiles)
-        pixel_masks.append(mask)
-        true_all.append(tile["true"])
-
-        patch_statuses.append(aggregate_patch_status_from_mask(mask))
+    for tile in tiles:
         values, counts = np.unique(tile["true"], return_counts=True)
         patch_true.append(int(values[np.argmax(counts)]))
+        for alpha, weighted in cells:
+            quantiles = (
+                {
+                    c: calib.quantile(
+                        alpha, test_descriptor=tile["descriptor"], bandwidth=bandwidth
+                    )
+                    for c, calib in calibrator.by_class.items()
+                }
+                if weighted
+                else plain[alpha]
+            )
+            mask = prediction_mask(tile["scores"], quantiles)
+            pixels[(alpha, weighted)] += PixelCounts.from_mask(mask, tile["true"])
+            statuses[(alpha, weighted)].append(aggregate_patch_status_from_mask(mask))
 
-    full_mask = np.concatenate(pixel_masks, axis=0)
-    full_true = np.concatenate(true_all, axis=0)
-    pixel_metrics = evaluate_prediction_mask(full_mask, full_true)
-    patch_metrics = evaluate_patch_statuses(patch_statuses, patch_true)
-    return pixel_metrics, patch_metrics
+    if not patch_true:
+        raise ValueError("No test tiles contained tissue.")
+    results = {
+        cell: (pixels[cell].metrics(), evaluate_patch_statuses(statuses[cell], patch_true))
+        for cell in cells
+    }
+    return results, len(patch_true)
 
 
 def main() -> int:
@@ -213,24 +235,27 @@ def main() -> int:
     model.load_state_dict(checkpoint["model_state"])
 
     calibrator, bandwidth = load_calibrator(out_dir)
-    cache = PseudoLabelCache(config.data.cache_root)
+    cache = PseudoLabelCache(args.cache or config.data.cache_root)
     source = DirectoryPatchSource(config.data.patch_root, splits=["train", "test"])
     test_tiles = collect_test_tiles(out_dir, cache, source, args.max_patches, config.seed)
     if not test_tiles:
         raise SystemExit("No test tiles found.")
 
-    print(f"Evaluating {len(test_tiles)} held-out test tiles across "
+    print(f"Evaluating {len(test_tiles)} held-out test tiles from {cache.root} across "
           f"{len(ALPHA_GRID)} significance levels. device={device}")
-    per_tile = run_inference(
+    tiles = iter_test_tiles(
         model, normalize_batch, config.model.in_channels, cache, test_tiles, device
     )
+    try:
+        results, n_tiles = stream_evaluation(calibrator, bandwidth, tiles, ALPHA_GRID)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    print(f"Scored {n_tiles} tiles with tissue.")
 
     rows = []
     for alpha in ALPHA_GRID:
         for weighted in (False, True):
-            pixel_metrics, patch_metrics = evaluate_alpha(
-                calibrator, bandwidth, per_tile, alpha, weighted
-            )
+            pixel_metrics, patch_metrics = results[(alpha, weighted)]
             rows.append(
                 {
                     "alpha": alpha,
