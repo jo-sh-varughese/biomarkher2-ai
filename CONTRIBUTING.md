@@ -23,8 +23,8 @@ cd biomarkher2-ai
 python -m venv .venv
 .venv\Scripts\activate            # Windows;  source .venv/bin/activate on Mac/Linux
 pip install -r requirements.txt
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pytest -q                         # must show "283 passed" before you touch anything
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pytest -q                         # must show all tests passed before you touch anything
 ```
 
 If `pytest` doesn't pass cleanly on a fresh clone, stop and say so rather than

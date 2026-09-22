@@ -24,12 +24,14 @@ WORKDIR /app
 # changes, not on every source edit, which is most of a rebuild's time on a
 # torch install.
 #
-# torch is deliberately NOT in requirements.txt (see its own comment) --
-# plain PyPI serves a much larger GPU build by default, which is both wrong
-# for this CPU-only project and hundreds of MB heavier than it needs to be.
-# Installed here from PyTorch's own CPU wheel index instead, pinned to the
-# exact version this project was built and tested against.
-RUN pip install --no-cache-dir torch==2.13.0 \
+# torch/torchvision are deliberately NOT in requirements.txt (see its own
+# comment) -- plain PyPI serves a much larger GPU build by default, which is
+# both wrong for this CPU-only project and hundreds of MB heavier than it
+# needs to be. Installed here from PyTorch's own CPU wheel index instead,
+# pinned to the exact versions this project was built and tested against.
+# torchvision provides the ResNet18 encoder models/unet_seg.py imports
+# (adopted in Phase 5) -- the image fails at import time without it.
+RUN pip install --no-cache-dir torch==2.13.0 torchvision==0.28.0 \
     --index-url https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
