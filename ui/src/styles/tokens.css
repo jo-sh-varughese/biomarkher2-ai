@@ -1,0 +1,197 @@
+/* ============================================================================
+   BioMarkHER2 design tokens
+   One place for colour, type, spacing, elevation and motion. Every component
+   reads from here; nothing below this file hardcodes a hex value.
+   ==========================================================================*/
+
+:root {
+  /* --- brand ramp: a clinical indigo, warm enough not to read as "corporate
+     blue", saturated enough to survive a projector in a lecture theatre --- */
+  --violet-50:  #f1f0fe;
+  --violet-100: #e4e2fd;
+  --violet-200: #cdc9fb;
+  --violet-300: #ada6f7;
+  --violet-400: #8a7cf1;
+  --violet-500: #6f5ce8;
+  --violet-600: #5b45db;
+  --violet-700: #4c37bf;
+  --violet-800: #3f2f9c;
+  --violet-900: #362b7c;
+
+  /* --- neutrals: very slightly blue so white cards feel lifted off the page
+     rather than pasted onto it --- */
+  --slate-0:   #ffffff;
+  --slate-25:  #fbfbfe;
+  --slate-50:  #f5f6fb;
+  --slate-100: #eceef6;
+  --slate-200: #dfe2ee;
+  --slate-300: #c4c9dd;
+  --slate-400: #9aa1bd;
+  --slate-500: #737b9c;
+  --slate-600: #565d7c;
+  --slate-700: #3f4562;
+  --slate-800: #2a2f46;
+  --slate-900: #1b1f31;
+  --slate-950: #12152250;
+
+  /* --- semantic --- */
+  --teal-400:   #2dd4bf;
+  --teal-500:   #14b8a6;
+  --amber-400:  #fbbf24;
+  --amber-500:  #f59e0b;
+  --rose-400:   #fb7185;
+  --rose-500:   #f43f5e;
+  --emerald-500:#10b981;
+
+  /* --- HER2 intensity classes. These are *fallbacks*: the server sends the
+     authoritative colours in /api/context and the UI prefers those, so the
+     legend, the heatmap and the table can never drift apart. --- */
+  --her2-0:  #cfd8dc;
+  --her2-1:  #eaa237;
+  --her2-2:  #e08214;
+  --her2-3:  #8c3d04;
+
+  /* --- the image viewer is always a dark instrument, in either theme: a
+     dark surround is how pathology and radiology viewers keep a stained
+     field's contrast legible, and it sets the imagery apart from the
+     measurement chrome around it. --- */
+  --viewer-bg:      #0b0d15;
+  --viewer-surface: #121521;
+  --viewer-raised:  #1a1e2e;
+  --viewer-line:    #242a3f;
+  --viewer-text:    #eef0f8;
+  --viewer-text-2:  #a4abc8;
+  --viewer-text-3:  #7b83a3;
+
+  /* --- typography --- */
+  /* Inter is listed first and Anek Malayalam second on purpose. Font matching
+     happens per glyph, so Latin characters -- HER2, 2+, α, the numbers --
+     render in Inter, and Malayalam characters fall through to Anek Malayalam.
+     One stack, correct for a bilingual interface where the technical terms
+     stay in Latin script inside a Malayalam sentence. */
+  --font-sans: "Inter", "Anek Malayalam", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Fraunces", "Anek Malayalam", "Iowan Old Style", Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
+    Menlo, Consolas, monospace;
+
+  /* --- radii --- */
+  --r-xs: 8px;
+  --r-sm: 11px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 22px;
+  --r-pill: 999px;
+
+  /* --- motion. One easing curve for everything that moves, one that
+     overshoots slightly for things that appear. --- */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --t-fast: 130ms;
+  --t-med: 260ms;
+  --t-slow: 480ms;
+
+  /* --- layout --- */
+  --sidebar-w: 264px;
+  --rail-w: 340px;
+  --gap: 20px;
+  --page-max: 1680px;
+}
+
+/* ---------------------------------------------------------------- light --- */
+/* Light is the default and the operating system does not get a vote -- the
+   only thing that switches this portal to dark is the toggle, which writes
+   data-theme="dark". `color-scheme` is pinned per theme so the browser's own
+   widgets (scrollbars, date pickers, autofill) match the page instead of the
+   OS: a dark scrollbar down the side of a light page is the usual tell that
+   this was forgotten. */
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg:            var(--slate-50);
+  --bg-deep:       #eef0f8;
+  --surface:       var(--slate-0);
+  --surface-2:     var(--slate-25);
+  --surface-sunken: var(--slate-50);
+  --surface-inverse: var(--slate-900);
+
+  --line:          var(--slate-200);
+  --line-soft:     var(--slate-100);
+  --line-strong:   var(--slate-300);
+
+  --text:          var(--slate-900);
+  --text-2:        var(--slate-600);
+  --text-3:        var(--slate-500);
+  --text-inverse:  var(--slate-0);
+
+  --accent:        var(--violet-600);
+  --accent-hover:  var(--violet-700);
+  --accent-soft:   var(--violet-50);
+  --accent-soft-2: var(--violet-100);
+  --accent-text:   var(--violet-700);
+  --on-accent:     #ffffff;
+
+  --ok:      #047857;
+  --ok-soft: #ecfdf5;
+  --warn:      #b45309;
+  --warn-soft: #fffbeb;
+  --danger:      #be123c;
+  --danger-soft: #fff1f2;
+
+  --shadow-xs: 0 1px 2px rgba(27, 31, 49, 0.05);
+  --shadow-sm: 0 1px 2px rgba(27, 31, 49, 0.04), 0 4px 14px -8px rgba(27, 31, 49, 0.12);
+  --shadow-md: 0 2px 6px rgba(27, 31, 49, 0.05), 0 18px 34px -18px rgba(27, 31, 49, 0.24);
+  --shadow-lg: 0 4px 12px rgba(27, 31, 49, 0.06), 0 36px 64px -28px rgba(27, 31, 49, 0.3);
+  --shadow-accent: 0 10px 26px -10px rgba(91, 69, 219, 0.62);
+
+  --scrim: rgba(27, 31, 49, 0.42);
+  --grid-line: rgba(27, 31, 49, 0.055);
+}
+
+/* ----------------------------------------------------------------- dark --- */
+/* Reached only by the toggle. There is deliberately no
+   `@media (prefers-color-scheme: dark)` rule: an OS-level dark preference
+   used to flip these tokens, which contradicted the light default and gave
+   an OS-dark phone a dark first paint before the stamped attribute corrected
+   it. One trigger for dark, and one only. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:            #0c0e18;
+  --bg-deep:       #08090f;
+  --surface:       #151827;
+  --surface-2:     #1b1f30;
+  --surface-sunken: #10131f;
+  --surface-inverse: #f5f6fb;
+
+  --line:          #262b40;
+  --line-soft:     #1e2233;
+  --line-strong:   #333a55;
+
+  --text:          #eef0f8;
+  --text-2:        #a4abc8;
+  --text-3:        #7b83a3;
+  --text-inverse:  #12152a;
+
+  --accent:        var(--violet-400);
+  --accent-hover:  var(--violet-300);
+  --accent-soft:   rgba(138, 124, 241, 0.13);
+  --accent-soft-2: rgba(138, 124, 241, 0.22);
+  --accent-text:   var(--violet-300);
+  --on-accent:     #12152a;
+
+  --ok:      #34d399;
+  --ok-soft: rgba(52, 211, 153, 0.13);
+  --warn:      #fbbf24;
+  --warn-soft: rgba(251, 191, 36, 0.13);
+  --danger:      #fb7185;
+  --danger-soft: rgba(251, 113, 133, 0.13);
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45), 0 6px 14px -8px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.4), 0 18px 34px -18px rgba(0, 0, 0, 0.8);
+  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.5), 0 36px 64px -28px rgba(0, 0, 0, 0.9);
+  --shadow-accent: 0 10px 26px -12px rgba(138, 124, 241, 0.5);
+
+  --scrim: rgba(4, 5, 10, 0.66);
+  --grid-line: rgba(255, 255, 255, 0.05);
+}

@@ -24,10 +24,13 @@ import pytest
 from app.analysis import (
     AMBIGUITY_COLORS,
     INTENSITY_COLORS,
+    ISOLATE_INK,
     MODEL_LIMITATION,
     NOT_A_SCORE,
     PALETTE,
     colorize,
+    dab_heatmap,
+    isolate_overlays,
     overlay,
     overlay_ambiguity,
     percentages,
@@ -95,6 +98,74 @@ def test_overlay_ambiguity_leaves_excluded_pixels_untouched():
     assert not np.array_equal(blended[4:], rgb[4:]), "ambiguous region was not painted"
 
 
+def test_heatmap_darkens_monotonically_with_dab_signal():
+    """The whole point of the heatmap over the four discrete classes is that
+    it does not snap a pixel into a bucket -- a pixel with more DAB signal
+    must always read as a "hotter" colour than one with less, not just a
+    different one."""
+    thresholds = (0.15, 0.35, 0.6)
+    tissue = np.ones((1, 5), dtype=bool)
+    dab = np.array([[0.0, 0.1, 0.2, 0.4, 0.8]], dtype=np.float32)
+    rgb = np.full((1, 5, 3), 220, dtype=np.uint8)
+
+    heat = dab_heatmap(rgb, dab, tissue, thresholds, alpha=1.0).astype(np.int32)
+    # Distance from the lightest (weakest-signal) stop should only grow.
+    distances = np.linalg.norm(heat - heat[0, 0], axis=-1)[0]
+    assert list(distances) == sorted(distances)
+    assert distances[-1] > 0, "the strongest pixel must not equal the weakest"
+
+
+def test_heatmap_leaves_non_tissue_pixels_untouched():
+    """Mirrors overlay()'s own discipline: painting outside the tissue mask
+    would hide what the tissue detector excluded, here as much as there."""
+    rgb = np.full((4, 4, 3), 200, dtype=np.uint8)
+    dab = np.full((4, 4), 0.9, dtype=np.float32)
+    tissue = np.zeros((4, 4), dtype=bool)
+    tissue[2:] = True
+
+    heat = dab_heatmap(rgb, dab, tissue, (0.15, 0.35, 0.6))
+    assert np.array_equal(heat[:2], rgb[:2]), "non-tissue pixels were painted"
+    assert not np.array_equal(heat[2:], rgb[2:]), "tissue pixels were not painted"
+
+
+def test_isolate_overlays_paint_only_their_own_class():
+    """The whole point of "isolate" is that picking the 2+ entry shows 2+
+    and NOTHING else -- if it leaked another class's pixels, "where is the
+    2+" would be exactly as misleading as the all-classes map it exists to
+    improve on."""
+    rgb = np.full((4, 8, 3), 210, dtype=np.uint8)
+    classes = np.zeros((4, 8), dtype=np.uint8)
+    classes[:, :2] = 1  # negative
+    classes[:, 2:4] = 2  # weak
+    classes[:, 4:6] = 3  # moderate
+    classes[:, 6:8] = 4  # strong
+
+    overlays = isolate_overlays(rgb, classes)
+    assert set(overlays) == {"negative", "weak (1+)", "moderate (2+)", "strong (3+)"}
+
+    moderate = overlays["moderate (2+)"].astype(int)
+    ink = np.array([int(ISOLATE_INK[3][i : i + 2], 16) for i in (1, 3, 5)])
+    # Its own region (columns 4:6) carries the class ink...
+    assert np.abs(moderate[:, 4:6] - ink).max() < 25
+    # ...and every other region is plain grey -- no other class's colour,
+    # and no stain colour, for the 2+ pixels to be confused with.
+    others = np.concatenate([moderate[:, :4], moderate[:, 6:8]], axis=1)
+    assert (others[..., 0] == others[..., 1]).all() and (others[..., 1] == others[..., 2]).all()
+
+
+def test_every_isolate_ink_is_visible_on_the_washed_field():
+    """A class whose highlight blends into the wash cannot be found, which is
+    the one job this view has -- negative's own faint map colour failed
+    exactly this, hence ISOLATE_INK."""
+    from app.analysis import desaturate
+    from tests.synthetic import graded_patch
+
+    wash = desaturate(graded_patch(size=64), lift=0.6).astype(float).mean(axis=(0, 1))
+    for c, hex_colour in ISOLATE_INK.items():
+        rgb = np.array([int(hex_colour[i : i + 2], 16) for i in (1, 3, 5)], dtype=float)
+        assert np.linalg.norm(rgb - wash) > 60, f"class {c} ink {hex_colour} blends into the wash"
+
+
 def test_ambiguity_palette_shares_no_colour_with_the_intensity_palette():
     """The ambiguity panel answers a different question ("how sure") from the
     other four ("what class"); a shared colour would let it be misread as a
@@ -160,7 +231,10 @@ def test_analysis_reports_both_columns_and_never_a_score(analyzer):
 
     result = analyzer.analyze(graded_patch(size=128), patch_id="demo.png").to_dict()
 
-    assert set(result["images"]) == {"original", "tissue", "model", "baseline"}
+    assert set(result["images"]) == {"original", "tissue", "model", "baseline", "heatmap"}
+    assert set(result["isolate"]) == set(result["model_percentages"]), (
+        "isolate must offer exactly the classes model_percentages reports, no more, no less"
+    )
     assert result["baseline_percentages"], "the control column is missing"
     assert result["model_percentages"]
     assert 0.0 <= result["tissue_percent"] <= 100.0
@@ -368,6 +442,30 @@ def test_sample_paths_cannot_escape_the_patch_root(tmp_path):
         state.read_sample("train/class_0/nope.png")
 
 
+def test_dataset_label_looks_up_the_samples_own_folder(tmp_path):
+    """The fact the frontend needs to lead with -- "what does the dataset
+    say this field is" -- has to come from the SAME folder the sample list
+    itself was built from, not be re-derived some other way that could
+    silently drift from it."""
+    from PIL import Image
+
+    from app.server import State
+
+    class FakeAnalyzer:
+        provenance = {"run": "x"}
+
+    root = tmp_path / "data"
+    folder = root / "test" / "class_2+"
+    folder.mkdir(parents=True)
+    Image.new("RGB", (4, 4), "white").save(folder / "field.png")
+
+    state = State(FakeAnalyzer(), root, tmp_path / "reviews.jsonl")
+    [sample] = state.samples
+    assert sample["folder_label"] == "2+"
+    assert state.dataset_label(sample["id"]) == "2+"
+    assert state.dataset_label("not/a/real/id.png") is None
+
+
 def test_a_review_is_appended_with_its_provenance(tmp_path):
     from app.server import State
 
@@ -383,6 +481,297 @@ def test_a_review_is_appended_with_its_provenance(tmp_path):
     assert [r["patch_id"] for r in rows] == ["a.png", "b.png"]
     assert all(r["run"] == "artifacts/phase2_40x" for r in rows)
     assert all(r["recorded_at"] for r in rows), "reviews must be timestamped"
+
+
+def test_an_annotation_is_recorded_with_id_and_filtered_by_patch(tmp_path):
+    from app.server import State
+
+    class FakeAnalyzer:
+        provenance = {"run": "x"}
+
+    state = State(FakeAnalyzer(), tmp_path / "missing", tmp_path / "reviews.jsonl")
+    saved = state.record_annotation({
+        "patch_id": "x.png", "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2,
+        "note": "possible artifact", "score": "", "reviewer": "AB",
+    })
+    state.record_annotation({
+        "patch_id": "y.png", "x": 0.0, "y": 0.0, "w": 0.5, "h": 0.5,
+        "note": "other field", "score": "", "reviewer": "AB",
+    })
+
+    assert saved["id"].startswith("ann-")
+    assert saved["recorded_at"]
+    # Defaults to a file next to the review log, the same "one artifacts/
+    # directory" convention record_review already follows.
+    assert state.annotations_log == tmp_path / "annotations.jsonl"
+    assert [e["patch_id"] for e in state.read_annotations("x.png")] == ["x.png"]
+    assert state.read_annotations("no-such-field") == []
+
+
+def test_annotation_endpoint_validates_and_round_trips(tmp_path):
+    """End-to-end over real HTTP, mirroring test_report_endpoint_streams_a_pdf:
+    proves the route is wired to State.record_annotation with the right
+    validation, not just that the validation logic works in isolation."""
+    import http.client
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from app.server import Handler, State
+
+    class FakeAnalyzer:
+        provenance = {"run": "x"}
+
+    state = State(FakeAnalyzer(), tmp_path / "missing", tmp_path / "reviews.jsonl")
+    Handler.state = state
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def post(body):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        conn.request(
+            "POST", "/api/annotations",
+            body=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        return response.status, json.loads(response.read())
+
+    try:
+        status, payload = post({
+            "patch_id": "field.png", "x": 0.2, "y": 0.3, "w": 0.1, "h": 0.15,
+            "note": "check this focus", "reviewer": "AB",
+        })
+        assert status == 200
+        assert payload["ok"] is True
+        assert payload["annotation"]["patch_id"] == "field.png"
+        assert payload["annotation"]["id"]
+        assert state.read_annotations("field.png") == [payload["annotation"]]
+
+        # No reviewer -- the same discipline /api/review already enforces.
+        status, payload = post({
+            "patch_id": "field.png", "x": 0, "y": 0, "w": 0.1, "h": 0.1, "note": "x",
+        })
+        assert status == 400
+
+        # A box that does not fit inside the image.
+        status, payload = post({
+            "patch_id": "field.png", "x": 0.5, "y": 0, "w": 0.9, "h": 0.1,
+            "note": "x", "reviewer": "AB",
+        })
+        assert status == 400
+
+        # Neither a note nor a score -- nothing to record.
+        status, payload = post({
+            "patch_id": "field.png", "x": 0, "y": 0, "w": 0.1, "h": 0.1, "reviewer": "AB",
+        })
+        assert status == 400
+
+        # An unrecognised score string.
+        status, payload = post({
+            "patch_id": "field.png", "x": 0, "y": 0, "w": 0.1, "h": 0.1,
+            "score": "4+", "reviewer": "AB",
+        })
+        assert status == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_analyze_response_includes_this_fields_saved_annotations(analyzer, tmp_path):
+    """/api/analyze is what the portal actually calls to load a field, so the
+    annotations it carries have to come back from there, not only from the
+    lower-level State methods the two tests above exercise directly."""
+    import base64
+    import http.client
+    import io
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from PIL import Image
+
+    from app.server import Handler, State
+    from tests.synthetic import graded_patch
+
+    state = State(analyzer, Path("data/raw"), tmp_path / "reviews.jsonl")
+    state.record_annotation({
+        "patch_id": "demo.png", "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2,
+        "note": "earlier note", "score": "", "reviewer": "AB",
+    })
+    Handler.state = state
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        buffer = io.BytesIO()
+        Image.fromarray(graded_patch(size=128)).save(buffer, format="PNG")
+        data_uri = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        body = json.dumps({"image": data_uri, "name": "demo.png"}).encode("utf-8")
+        conn.request("POST", "/api/analyze", body=body, headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        result = json.loads(response.read())
+
+        assert response.status == 200
+        assert [a["note"] for a in result["annotations"]] == ["earlier note"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_analyze_endpoint_reports_the_datasets_own_label(analyzer, tmp_path):
+    """dataset_label on /api/analyze's response must be the sample's own
+    folder label for a patch_id request, and None for an upload -- there is
+    no dataset folder behind an uploaded image to look one up in."""
+    import base64
+    import http.client
+    import io
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    from PIL import Image
+
+    from app.server import Handler, State
+    from tests.synthetic import graded_patch
+
+    patch_root = tmp_path / "data"
+    folder = patch_root / "test" / "class_3+"
+    folder.mkdir(parents=True)
+    Image.fromarray(graded_patch(size=64)).save(folder / "field.png")
+
+    Handler.state = State(analyzer, patch_root, tmp_path / "reviews.jsonl")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def post(body):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        conn.request(
+            "POST", "/api/analyze",
+            body=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        response = conn.getresponse()
+        return response.status, json.loads(response.read())
+
+    try:
+        status, result = post({"patch_id": "test/class_3+/field.png"})
+        assert status == 200
+        assert result["dataset_label"] == "3+"
+
+        buffer = io.BytesIO()
+        Image.fromarray(graded_patch(size=64)).save(buffer, format="PNG")
+        data_uri = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+        status, result = post({"image": data_uri, "name": "uploaded.png"})
+        assert status == 200
+        assert result["dataset_label"] is None
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+class _Running:
+    """A real server on an ephemeral port for the duration of a with-block."""
+
+    def __init__(self, state):
+        self.state = state
+
+    def __enter__(self):
+        import threading
+        from http.server import ThreadingHTTPServer
+
+        from app.server import Handler
+
+        Handler.state = self.state
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        return self
+
+    def request(self, method, path, body=None):
+        import http.client
+
+        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=30)
+        payload = json.dumps(body).encode("utf-8") if body is not None else None
+        conn.request(method, path, body=payload, headers={"Content-Type": "application/json"})
+        response = conn.getresponse()
+        return response.status, response.getheader("Content-Type") or "", response.read()
+
+    def __exit__(self, *exc):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_reviews_endpoint_serves_the_log_newest_first(tmp_path):
+    """The Case log and the dashboard are views of the server's review log,
+    so what one POSTs to /api/review has to come back from /api/reviews --
+    and nothing else may: no seeded demo rows mixed in with real sign-offs."""
+    from app.server import State
+
+    class FakeAnalyzer:
+        provenance = {"run": "artifacts/phase2_unet"}
+
+    state = State(FakeAnalyzer(), tmp_path / "missing", tmp_path / "reviews.jsonl")
+    with _Running(state) as srv:
+        status, _, body = srv.request("GET", "/api/reviews")
+        assert status == 200 and json.loads(body) == {"reviews": []}
+
+        for patch, score, agrees in (("a.png", "2+", True), ("b.png", "cannot assess from this field", False)):
+            status, _, _ = srv.request("POST", "/api/review", {
+                "patch_id": patch, "score": score, "agrees": agrees, "reviewer": "AB",
+                "notes": "n", "measurements": {"tissue_percent": 61.5},
+            })
+            assert status == 200
+
+        status, _, body = srv.request("GET", "/api/reviews")
+        rows = json.loads(body)["reviews"]
+    assert [r["patch_id"] for r in rows] == ["b.png", "a.png"]
+    assert rows[1]["agrees"] is True and rows[0]["agrees"] is False
+    assert rows[1]["tissue_percent"] == 61.5
+    assert all(r["at"] and r["reviewer"] == "AB" for r in rows)
+
+
+def test_file_paths_404_instead_of_falling_through_to_the_page(tmp_path):
+    """A request for a file that is not in the build must be a 404. Before
+    this, /fonts/x.woff2 came back as index.html and the browser tried to
+    decode the page as a font."""
+    from app.server import State
+
+    class FakeAnalyzer:
+        provenance = {"run": "x"}
+
+    dist = tmp_path / "dist"
+    (dist / "fonts").mkdir(parents=True)
+    (dist / "index.html").write_text("<!doctype html><title>portal</title>", encoding="utf-8")
+    (dist / "fonts" / "real.woff2").write_bytes(b"wOF2")
+
+    state = State(FakeAnalyzer(), tmp_path / "missing", tmp_path / "r.jsonl", dist)
+    with _Running(state) as srv:
+        status, _, _ = srv.request("GET", "/fonts/missing.woff2")
+        assert status == 404
+        status, ctype, body = srv.request("GET", "/fonts/real.woff2")
+        assert status == 200 and ctype == "font/woff2" and body == b"wOF2"
+        # Client-side routes still get the portal, including on hard refresh.
+        for route in ("/", "/analysis", "/cases"):
+            status, ctype, body = srv.request("GET", route)
+            assert status == 200 and ctype.startswith("text/html") and b"portal" in body
+
+
+def test_heatmap_legend_matches_the_rendering_thresholds(analyzer):
+    """The colour bar the portal draws comes from this, so its stops must be
+    the heatmap's own, in order, with a tick at each class threshold."""
+    from app.analysis import HEATMAP_STOPS
+
+    legend = analyzer.heatmap_legend()
+    weak, moderate, strong = analyzer.preprocessing.stain.thresholds()
+    assert [s["color"] for s in legend["stops"]] == list(HEATMAP_STOPS)
+    positions = [s["at"] for s in legend["stops"]]
+    assert positions == sorted(positions) and positions[0] == 0.0 and positions[-1] == 1.0
+    assert [t["at"] for t in legend["ticks"]] == pytest.approx([weak / strong, moderate / strong, 1.0], abs=1e-3)
+    assert [t["label"] for t in legend["ticks"]] == ["weak (1+)", "moderate (2+)", "strong (3+)"]
 
 
 def test_cannot_assess_is_an_offered_choice():

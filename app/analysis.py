@@ -40,7 +40,7 @@ from evaluation.conformal import (
 )
 from evaluation.stain_shift import patch_stain_descriptor
 from models import prepare_pixel_array, select_architecture
-from preprocessing.baseline import CLASS_NAMES, NUM_CLASSES, area_distribution
+from preprocessing.baseline import CLASS_NAMES, NUM_CLASSES, TISSUE_CLASSES, area_distribution
 from preprocessing.config import PreprocessingConfig
 from preprocessing.pipeline import PreprocessingPipeline
 from training.config import TrainingConfig
@@ -48,14 +48,33 @@ from training.config import TrainingConfig
 # Colour-blind-safe: a neutral pair for the two unstained classes and a
 # single-hue orange ramp that also increases monotonically in darkness, so the
 # ordering survives greyscale printing and both common forms of colour vision
-# deficiency.
+# deficiency. The weak (1+) step was #ffd699 until it measured 1.37:1 against
+# a white card -- below the 2:1 floor an ordered ramp's light end needs to be
+# seen at all, and 1+ is the step that separates HER2-0 from HER2-low. The
+# ramp 2..4 passes the ordinal checks (monotone lightness, >=0.06 steps, one
+# hue within 25 degrees, light end >= 2:1) on both the light and dark cards.
 INTENSITY_COLORS: dict[int, str] = {
     0: "#f0f0f0",
     1: "#cfd8dc",
-    2: "#ffd699",
+    2: "#eaa237",
     3: "#e08214",
     4: "#8c3d04",
 }
+
+# What "Where: <class>" paints each class in. The class colours themselves,
+# except negative: #cfd8dc is deliberately faint on the intensity map (it is
+# the "nothing here" class there), which also makes it invisible on the
+# washed-out field this view draws on. A darker step of the same blue-grey
+# keeps it findable without introducing a new hue.
+ISOLATE_INK: dict[int, str] = {1: "#78909c", 2: "#eaa237", 3: "#e08214", 4: "#8c3d04"}
+
+# The DAB heatmap's own scale: a sequential "semantic heat" ramp (pale ->
+# amber -> red -> crimson), which is legible over tissue in a way the
+# class ramp -- the same hue family as DAB brown itself -- is not. Its stops
+# sit at 0 and at the weak / moderate / strong thresholds, so a colour on the
+# heatmap still lines up with a class boundary; the UI draws this as a
+# colour bar with those three ticks (see Analyzer.heatmap_legend).
+HEATMAP_STOPS: tuple[str, str, str, str] = ("#fff5c8", "#fec85a", "#f05f23", "#a50f28")
 
 MODEL_LIMITATION = (
     "This model's moderate (2+) prediction is real but imperfect: on its "
@@ -139,6 +158,87 @@ def overlay(rgb: np.ndarray, classes: np.ndarray, alpha: float = 0.55) -> np.nda
     return (base * (1 - weight) + tinted * weight).round().astype(np.uint8)
 
 
+def desaturate(rgb: np.ndarray, lift: float = 0.0, where: np.ndarray | None = None) -> np.ndarray:
+    """Greyscale (Rec. 601 luma), optionally lifted toward white.
+
+    Every class and heat colour in this module is warm, and so is DAB brown;
+    painted over the stain itself they blend into it. Painted over the same
+    field in grey, they read at a glance. ``where`` limits the change to a
+    mask (typically tissue), leaving everything outside it exactly as
+    scanned -- the same "never alter what the tissue detector excluded" rule
+    :func:`overlay` keeps for background.
+    """
+    image = rgb.astype(np.float32)
+    luma = image @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    grey = np.repeat((luma * (1 - lift) + 255.0 * lift)[..., None], 3, axis=-1)
+    if where is None:
+        return grey.round().astype(np.uint8)
+    return np.where(np.asarray(where, dtype=bool)[..., None], grey, image).round().astype(np.uint8)
+
+
+def isolate_overlays(rgb: np.ndarray, classes: np.ndarray) -> dict[str, np.ndarray]:
+    """One image per tissue class: that class's pixels painted boldly, over
+    the rest of the field washed out to pale grey.
+
+    The all-classes "Intensity map" panel answers "what is everywhere in
+    this field"; on a field that is mostly negative that is a busy picture
+    in which the class that actually matters for this slide's own label
+    (say, 2+) can be a small, easy-to-miss fraction of it. This answers a
+    narrower, more useful question instead: given a class -- typically the
+    one this field's dataset label names -- how much of it is there, and
+    exactly where. A light tint over the full-colour stain was tried first
+    and failed at exactly that: orange over DAB brown is nearly invisible.
+    """
+    wash = desaturate(rgb, lift=0.6).astype(np.float32)
+    out: dict[str, np.ndarray] = {}
+    for c in TISSUE_CLASSES:
+        ink = np.array(_hex_to_rgb(ISOLATE_INK[c]), dtype=np.float32)
+        weight = np.where((classes == c)[..., None], 0.92, 0.0)
+        out[CLASS_NAMES[c]] = (wash * (1 - weight) + ink * weight).round().astype(np.uint8)
+    return out
+
+
+def heat_positions(thresholds: tuple[float, float, float]) -> tuple[float, float, float, float]:
+    """Where HEATMAP_STOPS sit on a 0..1 scale of DAB optical density, with 1
+    at the "strong" threshold (anything denser is drawn at the top colour)."""
+    weak, moderate, strong = thresholds
+    strong = max(strong, 1e-6)
+    return (0.0, weak / strong, moderate / strong, 1.0)
+
+
+def dab_heatmap(
+    rgb: np.ndarray,
+    dab: np.ndarray,
+    tissue_mask: np.ndarray,
+    thresholds: tuple[float, float, float],
+    alpha: float = 0.85,
+) -> np.ndarray:
+    """Continuous DAB optical-density heatmap over a greyscale field.
+
+    The four intensity-class panels bucket every pixel into one of
+    negative/weak/moderate/strong; a pixel just below the "strong" threshold
+    looks identical to one at the threshold. This shows the raw signal those
+    buckets are cut from instead, on HEATMAP_STOPS anchored at the SAME
+    thresholds (``weak``, ``moderate``, ``strong`` from
+    preprocessing/baseline.py). Heat fades in over [0, weak] rather than
+    starting opaque, so unstained tissue stays grey and "hot" means stained.
+    Pixels outside the tissue mask are left exactly as scanned.
+    """
+    weak, _moderate, strong = thresholds
+    mask = np.asarray(tissue_mask, dtype=bool)
+    value = np.clip(np.asarray(dab, dtype=np.float32), 0.0, strong) / max(strong, 1e-6)
+    positions = np.array(heat_positions(thresholds), dtype=np.float32)
+    stops = np.array([_hex_to_rgb(h) for h in HEATMAP_STOPS], dtype=np.float32)
+    flat = value.reshape(-1)
+    channels = [np.interp(flat, positions, stops[:, c]) for c in range(3)]
+    tinted = np.stack(channels, axis=-1).reshape(*value.shape, 3)
+
+    fade = np.clip(value / max(positions[1], 1e-6), 0.0, 1.0) * alpha
+    weight = np.where(mask, fade, 0.0)[..., None]
+    base = desaturate(rgb, lift=0.3, where=mask).astype(np.float32)
+    return (base * (1 - weight) + tinted * weight).round().astype(np.uint8)
+
+
 def overlay_ambiguity(rgb: np.ndarray, status: np.ndarray, alpha: float = 0.55) -> np.ndarray:
     """Blend a prediction-set-size status map over the image.
 
@@ -189,6 +289,11 @@ class PatchAnalysis:
     model_percentages: dict[str, float]
     baseline_percentages: dict[str, float]
     images: dict[str, str] = field(default_factory=dict)
+    isolate: dict[str, str] = field(default_factory=dict)
+    """One image per tissue class (same keys as model_percentages): that
+    class's pixels only, painted over the original field -- "how much and
+    where" for whichever class matters, not just whichever has the most
+    area. See isolate_overlays()."""
     disagreement_percent: float = 0.0
     conformal: dict | None = None
     """None when no calibration artifact is loaded at all. When a calibrator
@@ -224,6 +329,7 @@ class PatchAnalysis:
             "baseline_percentages": self.baseline_percentages,
             "disagreement_percent": self.disagreement_percent,
             "images": self.images,
+            "isolate": self.isolate,
             "conformal": conformal,
             "caveats": caveats,
         }
@@ -322,6 +428,25 @@ class Analyzer:
             return True
         current_fingerprint = checkpoint_fingerprint(checkpoint_path)
         return recorded_epoch != self.checkpoint_epoch or recorded_fingerprint != current_fingerprint
+
+    def heatmap_legend(self) -> dict:
+        """The DAB heatmap's scale, for the UI to draw as a colour bar.
+
+        Served rather than duplicated client-side so the bar and the pixels
+        cannot drift: both are computed from HEATMAP_STOPS and this run's own
+        thresholds. ``at`` is a 0..1 position on the bar (1 = the "strong"
+        threshold); ``fade_below`` is where the heat reaches full opacity.
+        """
+        thresholds = self.preprocessing.stain.thresholds()
+        positions = heat_positions(thresholds)
+        return {
+            "stops": [{"at": round(p, 4), "color": c} for p, c in zip(positions, HEATMAP_STOPS)],
+            "ticks": [
+                {"at": round(positions[i], 4), "label": CLASS_NAMES[c]}
+                for i, c in ((1, 2), (2, 3), (3, 4))
+            ],
+            "fade_below": round(positions[1], 4),
+        }
 
     def predict(self, rgb: np.ndarray) -> np.ndarray:
         """Dense class prediction over an image of any size.
@@ -430,16 +555,34 @@ class Analyzer:
             processed.normalized, probabilities, tissue
         )
 
+        # The class maps paint over the field in grey rather than over the
+        # stain: every class colour is warm, as is DAB, and on the brown field
+        # the 2+/3+ fills disappear into the staining they are measuring.
+        # "Original" stays in full colour for reading the stain itself.
+        grey_field = desaturate(processed.normalized, lift=0.22, where=tissue)
         images = {
             "original": to_data_uri(processed.original),
             "tissue": to_data_uri(
                 np.where(tissue[..., None], processed.original, 245).astype(np.uint8)
             ),
-            "model": to_data_uri(overlay(processed.normalized, predicted)),
-            "baseline": to_data_uri(overlay(processed.normalized, baseline)),
+            "model": to_data_uri(overlay(grey_field, predicted, alpha=0.62)),
+            "baseline": to_data_uri(overlay(grey_field, baseline, alpha=0.62)),
+            "heatmap": to_data_uri(
+                dab_heatmap(
+                    processed.normalized,
+                    processed.dab,
+                    tissue,
+                    self.preprocessing.stain.thresholds(),
+                )
+            ),
         }
         if ambiguity_image is not None:
             images["ambiguity"] = ambiguity_image
+
+        isolate = {
+            name: to_data_uri(image)
+            for name, image in isolate_overlays(processed.normalized, predicted).items()
+        }
 
         return PatchAnalysis(
             patch_id=patch_id,
@@ -452,5 +595,6 @@ class Analyzer:
                 100 * int(disagree.sum()) / max(1, tissue_pixels), 2
             ),
             images=images,
+            isolate=isolate,
             conformal=conformal,
         )

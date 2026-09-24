@@ -1,0 +1,59 @@
+# Netlify build for the BioMarkHER2 portal.
+#
+# There is no Python backend on Netlify, so /api/* is unreachable and the app
+# runs entirely on its demo data -- which is the case lib/api.js was written
+# for, and which every screen labels with a visible "Demo data" badge.
+
+[build]
+  command = "npm run build:netlify"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# HTTP Basic Auth in front of everything, assets included. Netlify's built-in
+# password protection is a paid-plan feature; this is the free-tier equivalent.
+# The password lives in the SITE_PASSWORD environment variable, never in this
+# file -- netlify.toml is committed, and a secret in a committed file is not a
+# secret. Set it with:  netlify env:set SITE_PASSWORD "..."
+[[edge_functions]]
+  function = "gate"
+  path = "/*"
+
+# Files that are not in the build must 404, not fall through to the page
+# below: the catch-all would otherwise hand the browser index.html for a
+# missing /fonts/*.woff2 (then decoded as a font -- "OTS parsing error") or
+# for a stale hashed /assets/*.js requested by a tab opened before the last
+# deploy ("expected a JavaScript module, got text/html"). These are
+# non-forced, so a file that does exist (fonts dropped into public/fonts/)
+# is still served.
+[[redirects]]
+  from = "/fonts/*"
+  to = "/index.html"
+  status = 404
+
+[[redirects]]
+  from = "/assets/*"
+  to = "/index.html"
+  status = 404
+
+# The portal uses real URLs (/analysis, /cases, /model, /method). Without this
+# rule a hard refresh or a shared link to any of them would 404, because no
+# such file exists on disk -- the router resolves them in the browser.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Hashed asset filenames change on every build, so they can be cached hard.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Frame-Options = "SAMEORIGIN"
