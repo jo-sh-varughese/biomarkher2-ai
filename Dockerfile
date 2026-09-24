@@ -7,8 +7,11 @@
 # which binds only to 127.0.0.1 on the host for exactly that reason.
 #
 # Build & run:
+#   cd ui && npm install && npm run build && cd ..   # once, or whenever ui/ changes
 #   docker compose up --build
 # Then open http://127.0.0.1:8000 -- same as running app/server.py directly.
+# (The build step needs Node on the HOST, not in this image -- see the
+# COPY ui/dist line below for why.)
 
 FROM python:3.11-slim
 
@@ -42,6 +45,13 @@ COPY preprocessing ./preprocessing
 COPY training ./training
 COPY evaluation ./evaluation
 COPY configs ./configs
+
+# The built React portal only -- not ui/ wholesale, which would drag in
+# node_modules and require a Node stage in this image for no reason: the
+# build step happens once on a dev machine (`npm run build` inside ui/, or
+# the `biomark` command), and this image only ever serves the static
+# result. Build it before `docker compose up --build` or this COPY fails.
+COPY ui/dist ./ui/dist
 
 # Not copied: data/ and artifacts/. Both are large (the patch dataset is
 # ~1.5 GB; checkpoints are hundreds of MB) and machine-specific -- see

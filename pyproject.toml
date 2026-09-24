@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "biomarkher2"
+version = "0.1.0"
+description = "BioMarkHER2 -- HER2 IHC pre-scoring review viewer"
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Kept empty deliberately -- app/server.py's own sys.path.insert() already
+# makes the repo root importable at runtime (see its module docstring), and
+# this project pins torch/torchvision from PyTorch's own CPU wheel index
+# rather than PyPI (see requirements.txt), which an install_requires list
+# here cannot express. `pip install -r requirements.txt` remains the one way
+# to install dependencies; this file exists only to register the `biomark`
+# command.
+dependencies = []
+
+[project.scripts]
+biomark = "app.cli:main"
+
+[tool.setuptools]
+packages = ["app"]

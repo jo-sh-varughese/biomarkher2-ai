@@ -46,10 +46,27 @@ from app.report import build_report_pdf_bytes
 from preprocessing.baseline import CLASS_NAMES, NUM_CLASSES
 
 STATIC = Path(__file__).resolve().parent / "static"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+# The built React portal (`npm run build` inside ui/, or the `biomark`
+# command, which builds it automatically). `app/static/` above is the
+# original vanilla-JS viewer -- kept on disk as the legacy fallback/reference
+# copy (see ui/README.md) but no longer served; the portal replaces it.
+UI_DIST_DEFAULT = REPO_ROOT / "ui" / "dist"
 MAX_UPLOAD_BYTES = 24 * 1024 * 1024
 CONTENT_TYPES = {".html": "text/html; charset=utf-8",
                  ".css": "text/css; charset=utf-8",
-                 ".js": "text/javascript; charset=utf-8"}
+                 ".js": "text/javascript; charset=utf-8",
+                 ".mjs": "text/javascript; charset=utf-8",
+                 ".json": "application/json",
+                 ".map": "application/json",
+                 ".svg": "image/svg+xml",
+                 ".png": "image/png",
+                 ".jpg": "image/jpeg",
+                 ".jpeg": "image/jpeg",
+                 ".ico": "image/x-icon",
+                 ".woff2": "font/woff2",
+                 ".woff": "font/woff",
+                 ".txt": "text/plain; charset=utf-8"}
 
 # The scores a pathologist may record. Deliberately includes "cannot assess" --
 # a review UI that forces a choice manufactures agreement it did not earn.
@@ -59,10 +76,17 @@ REVIEW_CHOICES = ["0", "1+", "2+", "3+", "cannot assess from this field"]
 class State:
     """Everything the handler needs, built once at start-up."""
 
-    def __init__(self, analyzer: Analyzer, patch_root: Path, review_log: Path):
+    def __init__(
+        self,
+        analyzer: Analyzer,
+        patch_root: Path,
+        review_log: Path,
+        ui_dist: Path | None = None,
+    ):
         self.analyzer = analyzer
         self.patch_root = patch_root
         self.review_log = review_log
+        self.ui_dist = Path(ui_dist) if ui_dist is not None else UI_DIST_DEFAULT
         self.lock = threading.Lock()
         self.samples = self._collect_samples()
 
@@ -137,13 +161,19 @@ class Handler(BaseHTTPRequestHandler):
     # -- routes --------------------------------------------------------
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
-        if path == "/":
-            path = "/static/index.html"
         if path == "/api/context":
             return self._json(200, self._context())
+        if path.startswith("/api/"):
+            return self._json(404, {"error": f"No such path: {path}"})
         if path.startswith("/static/"):
-            return self._static(path[len("/static/"):])
-        self._json(404, {"error": f"No such path: {path}"})
+            return self._asset(path[len("/static/"):])
+        # Everything else is a client-side route of the React portal
+        # (/, /login, /analysis, /cases, ...) -- the portal's own router
+        # decides what that path means, so every one of them gets the same
+        # index.html. This must come after the /api/ and /static/ checks
+        # above, or a hard refresh on e.g. /cases would try to serve it as
+        # a page instead of routing to the SPA shell.
+        self._spa()
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
@@ -161,15 +191,30 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001 - a demo should say what broke
             self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
 
-    def _static(self, name: str) -> None:
-        path = (STATIC / name).resolve()
-        if STATIC.resolve() not in path.parents or not path.is_file():
+    def _asset(self, name: str) -> None:
+        """Serve a built portal asset -- the vite build's `base: "/static/"`
+        means the bundle requests its own JS/CSS/sourcemaps from here."""
+        root = self.state.ui_dist.resolve()
+        path = (root / name).resolve()
+        if root not in path.parents or not path.is_file():
             return self._json(404, {"error": f"No such file: {name}"})
         self._send(
             200,
             path.read_bytes(),
             CONTENT_TYPES.get(path.suffix, "application/octet-stream"),
         )
+
+    def _spa(self) -> None:
+        index = self.state.ui_dist / "index.html"
+        if not index.is_file():
+            return self._json(404, {
+                "error": (
+                    f"The review portal has not been built ({index} is missing). "
+                    "Run `npm install && npm run build` inside ui/, or start the "
+                    "app with the `biomark` command, which builds it automatically."
+                ),
+            })
+        self._send(200, index.read_bytes(), "text/html; charset=utf-8")
 
     def _context(self) -> dict:
         return {
@@ -242,7 +287,9 @@ class Handler(BaseHTTPRequestHandler):
         return {"ok": True, "log": str(self.state.review_log)}
 
 
-def main() -> int:
+def build_argparser() -> argparse.ArgumentParser:
+    """Shared by `python -m app.server` and the `biomark` command (app/cli.py)
+    so both accept the same flags and print the same start-up banner."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", default="artifacts/phase2_unet",
                         help="run directory containing best.pt")
@@ -257,11 +304,18 @@ def main() -> int:
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
-    args = parser.parse_args()
+    parser.add_argument(
+        "--ui-dist", default=str(UI_DIST_DEFAULT),
+        help="Built React portal directory (`npm run build` inside ui/, or "
+        "the `biomark` command, which builds it automatically).",
+    )
+    return parser
 
+
+def serve(args) -> int:
     print(f"Loading model from {args.run} ...")
     analyzer = Analyzer(args.run, args.config, args.preprocessing, args.conformal_alpha)
-    Handler.state = State(analyzer, Path(args.patch_root), Path(args.reviews))
+    Handler.state = State(analyzer, Path(args.patch_root), Path(args.reviews), Path(args.ui_dist))
     print(f"Checkpoint epoch {analyzer.checkpoint_epoch}; "
           f"{len(Handler.state.samples)} sample patches indexed.")
     if analyzer.calibrator is not None:
@@ -271,6 +325,10 @@ def main() -> int:
     else:
         print("No conformal calibration found for this run; ambiguity fields "
               "will not be served (see scripts/calibrate_conformal.py).")
+    if not (Handler.state.ui_dist / "index.html").is_file():
+        print(f"\nWARNING: no built portal at {Handler.state.ui_dist} -- the "
+              "site will 404. Run `npm install && npm run build` inside ui/, "
+              "or use the `biomark` command instead, which builds it first.\n")
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"\nWARNING: binding to {args.host}. This viewer has no "
               "authentication and shows medical images. Local use only.\n")
@@ -286,6 +344,10 @@ def main() -> int:
     finally:
         server.server_close()
     return 0
+
+
+def main() -> int:
+    return serve(build_argparser().parse_args())
 
 
 if __name__ == "__main__":

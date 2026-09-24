@@ -10,3 +10,4 @@ configs/paths.yaml
 .claude/
 *.log
 *.aux
+*.egg-info/

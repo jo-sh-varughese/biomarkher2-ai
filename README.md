@@ -200,7 +200,7 @@ the three-person task division: **[`PROJECT_PLAN.md`](PROJECT_PLAN.md)**.
 | Model & training | PyTorch (CPU), ResNet18 encoder / U-Net decoder, focal + Dice + cross-entropy loss |
 | Image processing | scikit-image, NumPy — colour deconvolution, tissue detection, tiling |
 | Evaluation | Conformal prediction, Cohen's kappa, ASCO/CAP 2018 mapping |
-| App | Python standard library (`http.server`) — no Flask/FastAPI, no CDN at runtime |
+| App | React portal (`ui/`) served by a Python standard library backend (`http.server`) — no Flask/FastAPI, no CDN at runtime |
 | Reports | ReportLab (PDF export) |
 | Packaging | Docker + docker-compose |
 | Config | Plain dataclasses + YAML — no Hydra, unknown keys rejected loudly |
@@ -221,9 +221,15 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 pytest -q                             # 283 passed
 
-python -m app.server --run artifacts/phase2_unet
-# open http://127.0.0.1:8000
+pip install -e .                      # registers the `biomark` command (one-off)
+biomark
+# builds ui/dist the first time (needs Node/npm), opens http://127.0.0.1:8000
 ```
+
+No Node installed, or want the raw two-step version? `biomark` is just
+`npm run build` (inside `ui/`) followed by `python -m app.server --run
+artifacts/phase2_unet` — see [`ui/README.md`](ui/README.md) and
+[`app/cli.py`](app/cli.py).
 
 Or with Docker:
 
