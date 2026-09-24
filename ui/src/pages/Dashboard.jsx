@@ -1,63 +1,98 @@
+/* The overview. Every figure here is computed from the review log -- the
+   server's own, when the backend is up -- so the tiles, the throughput chart,
+   the assessment mix and the recent-sign-offs table always agree with each
+   other and with the Case log. Nothing on this page is a hardcoded number. */
+
 import { useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Icon from "../components/Icon.jsx";
-import { ColumnChart, Donut, Sparkline, StackBar } from "../components/charts/Charts.jsx";
+import { ConcordBadge, ScoreBadge } from "../components/Badges.jsx";
+import { ClassBars, ColumnChart, Donut, Sparkline, StackBar } from "../components/charts/Charts.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
 import { avatarStyle, useAuth } from "../state/AuthContext.jsx";
-import { DEMO_THROUGHPUT } from "../lib/demo.js";
-import { classColor, dominantClass, greetingKey, initials, pct, relativeTime } from "../lib/format.js";
+import {
+  classForLabel,
+  dailyCounts,
+  dominantClass,
+  greetingKey,
+  initials,
+  isCannotAssess,
+  LABEL_ORDER,
+  labelForClassName,
+  pct,
+  periodCounts,
+  relativeTime,
+  runName,
+  shortId,
+} from "../lib/format.js";
 import { useI18n } from "../i18n/I18nContext.jsx";
 
 export default function Dashboard() {
-  const { context, reviews, analysis } = usePortal();
+  const { context, reviews, reviewsDemo, analysis } = usePortal();
   const { user } = useAuth();
   const navigate = useNavigate();
   const { t, locale } = useI18n();
+  const classes = context?.classes ?? [];
 
   const stats = useMemo(() => {
     const total = reviews.length;
     const agreed = reviews.filter((r) => r.agrees).length;
-    const flagged = reviews.filter((r) => !r.agrees).length;
-    const unassessable = reviews.filter((r) => r.score === "Cannot assess").length;
+    const flagged = total - agreed;
+    const unassessable = reviews.filter((r) => isCannotAssess(r.score)).length;
+    const mine = reviews.filter((r) => r.reviewer === user.name).length;
     return {
       total,
       agreed,
       flagged,
       unassessable,
+      mine,
       concordance: total ? (agreed / total) * 100 : 0,
+      week: periodCounts(reviews, 7),
+      days: dailyCounts(reviews, 14),
     };
-  }, [reviews]);
+  }, [reviews, user.name]);
 
   // How the recorded pathologist assessments distribute across scores. This is
   // the reviewers' own tally, not the model's -- the model does not produce a
   // score, so it has no distribution to plot here.
-  const distribution = useMemo(() => {
-    const buckets = ["0", "1+", "2+", "3+", "Cannot assess"];
-    return buckets.map((label) => ({
-      label: label === "Cannot assess" ? t("analysis.cannotAssess") : label,
-      count: reviews.filter((r) => r.score === label).length,
-      color:
-        classColor(context?.classes, `HER2 ${label}`, null) ??
-        (label === "Cannot assess" ? "var(--line-strong)" : "var(--accent)"),
-    }));
-  }, [reviews, context, t]);
+  const distribution = useMemo(
+    () => [
+      ...LABEL_ORDER.map((label) => ({
+        key: label,
+        label,
+        count: reviews.filter((r) => r.score === label).length,
+        color: classForLabel(classes, label)?.color ?? "var(--accent)",
+      })),
+      {
+        key: "cannot",
+        label: t("analysis.cannotAssess"),
+        count: stats.unassessable,
+        color: "var(--text-3)",
+      },
+    ],
+    [reviews, classes, stats.unassessable, t],
+  );
 
-  const maxBucket = Math.max(1, ...distribution.map((d) => d.count));
   const recent = reviews.slice(0, 6);
+  const shortDay = (d) => d.toLocaleDateString(locale, { day: "numeric", month: "short" });
 
   return (
     <>
       <div className="page__head">
         <div>
-          <div className="eyebrow">{new Date().toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" })}</div>
+          <div className="eyebrow">
+            {new Date().toLocaleDateString(locale, { weekday: "long", day: "numeric", month: "long" })}
+          </div>
           <h1>
             {t(greetingKey())}, {user.name}
           </h1>
           <p className="lede">
-            {t(stats.total === 1 ? "dash.ledeOne" : "dash.lede", {
-              n: stats.total,
-              pct: pct(stats.concordance, 0),
-            })}
+            {stats.total === 0
+              ? t("dash.ledeNone")
+              : t(stats.total === 1 ? "dash.ledeOne" : "dash.lede", {
+                  n: stats.total,
+                  pct: pct(stats.concordance, 0),
+                })}
           </p>
         </div>
         <div className="page__actions">
@@ -75,22 +110,26 @@ export default function Dashboard() {
           icon="clipboard"
           label={t("dash.kpiReviewed")}
           value={stats.total}
-          foot={<><span className="trend trend--up"><Icon name="arrowUp" size={12} /> 14</span> {t("dash.kpiReviewedFoot")}</>}
+          trend={<Sparkline values={stats.days.map((d) => d.count)} width={96} height={34} />}
+          foot={<Delta delta={stats.week.delta} text={t("dash.kpiDelta", { n: stats.week.current })} />}
         />
         <Kpi
           icon="checkCircle"
           label={t("dash.kpiConcordant")}
           value={pct(stats.concordance, 0)}
+          meter={stats.concordance}
           foot={t("dash.kpiConcordantFoot", { a: stats.agreed, b: stats.total })}
         />
         <Kpi
           icon="alert"
+          tone="warn"
           label={t("dash.kpiFlagged")}
           value={stats.flagged}
           foot={t("dash.kpiFlaggedFoot")}
         />
         <Kpi
           icon="eye"
+          tone="muted"
           label={t("dash.kpiUnassessable")}
           value={stats.unassessable}
           foot={t("dash.kpiUnassessableFoot")}
@@ -99,91 +138,8 @@ export default function Dashboard() {
 
       <div className="dash-grid">
         <div className="dash-col">
-          {/* --- current field, or a prompt to load one --- */}
-          <section className="card card--pad rise">
-            <div className="card-head">
-              <div>
-                <h2>{t(analysis ? "dash.benchOn" : "dash.benchOff")}</h2>
-                <p className="sub">
-                  {analysis
-                    ? t("dash.benchSubOn", { id: analysis.patch_id, w: analysis.width, h: analysis.height })
-                    : t("dash.benchSubOff")}
-                </p>
-              </div>
-              <Link className="btn btn--soft btn--sm" to="/analysis">
-                {t(analysis ? "dash.open" : "dash.start")} <Icon name="arrowRight" size={14} />
-              </Link>
-            </div>
+          <Bench analysis={analysis} classes={classes} t={t} navigate={navigate} />
 
-            {analysis ? (
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 260px", gap: 22, alignItems: "center" }}>
-                <div style={{ display: "grid", gap: 16 }}>
-                  <div>
-                    <div className="eyebrow">{t("dash.largestClass")}</div>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 4 }}>
-                      <b
-                        style={{
-                          fontSize: "2.2rem",
-                          fontWeight: 800,
-                          letterSpacing: "-0.05em",
-                          color: classColor(context?.classes, dominantClass(analysis.model_percentages)?.[0]),
-                        }}
-                      >
-                        {dominantClass(analysis.model_percentages)?.[0]?.replace("HER2 ", "")}
-                      </b>
-                      <span className="muted tiny">
-                        {t("dash.measurementNotScore", {
-                          pct: pct(dominantClass(analysis.model_percentages)?.[1]),
-                        })}
-                      </span>
-                    </div>
-                  </div>
-
-                  <StackBar
-                    segments={(context?.classes ?? [])
-                      .filter((c) => c.index > 0)
-                      .map((c) => ({
-                        label: c.name,
-                        value: analysis.model_percentages?.[c.name] ?? 0,
-                        color: c.color,
-                      }))}
-                    height={14}
-                  />
-
-                  <div className="legend">
-                    {(context?.classes ?? [])
-                      .filter((c) => c.index > 0)
-                      .map((c) => (
-                        <span key={c.name}>
-                          <i style={{ background: c.color }} />
-                          {c.name} · {pct(analysis.model_percentages?.[c.name] ?? 0)}
-                        </span>
-                      ))}
-                  </div>
-                </div>
-
-                <img
-                  src={analysis.images.model}
-                  alt={t("analysis.views.model")}
-                  style={{ borderRadius: "var(--r-md)", boxShadow: "var(--shadow-sm)", width: "100%" }}
-                />
-              </div>
-            ) : (
-              <div className="empty" style={{ padding: "32px 16px" }}>
-                <span className="empty__art">
-                  <Icon name="slides" size={28} strokeWidth={1.5} />
-                </span>
-                <p>
-                  {t("dash.benchEmpty")}
-                </p>
-                <button type="button" className="btn btn--primary" onClick={() => navigate("/analysis")}>
-                  <Icon name="scan" size={16} /> {t("dash.chooseField")}
-                </button>
-              </div>
-            )}
-          </section>
-
-          {/* --- throughput --- */}
           <section className="card card--pad rise">
             <div className="card-head">
               <div>
@@ -191,18 +147,17 @@ export default function Dashboard() {
                 <p className="sub">{t("dash.throughputSub")}</p>
               </div>
               <span className="badge badge--outline">
-                <Icon name="activity" size={12} /> 14d
+                <Icon name="activity" size={12} /> {t("dash.throughputTotal", { n: stats.days.reduce((s, d) => s + d.count, 0) })}
               </span>
             </div>
-            <ColumnChart data={DEMO_THROUGHPUT} />
+            <ColumnChart data={stats.days} formatDay={shortDay} emptyLabel={t("dash.throughputEmpty")} />
           </section>
 
-          {/* --- recent --- */}
           <section className="card card--pad rise">
             <div className="card-head">
               <div>
                 <h2>{t("dash.recent")}</h2>
-                <p className="sub">{t("dash.recentSub")}</p>
+                <p className="sub">{t(reviewsDemo ? "dash.recentSubDemo" : "dash.recentSub")}</p>
               </div>
               <Link className="btn btn--ghost btn--sm" to="/cases">
                 {t("dash.viewAll")} <Icon name="arrowRight" size={14} />
@@ -211,43 +166,42 @@ export default function Dashboard() {
 
             {recent.length ? (
               <div className="table-wrap">
-                <table className="data data--stack">
+                <table className="data data--stack data--compact">
                   <thead>
                     <tr>
                       <th scope="col">{t("table.field")}</th>
                       <th scope="col">{t("table.assessment")}</th>
-                      <th scope="col">{t("table.datasetLabel")}</th>
                       <th scope="col">{t("table.reviewer")}</th>
                       <th scope="col">{t("table.concordant")}</th>
-                      <th scope="col">{t("table.when")}</th>
+                      <th scope="col" className="num">{t("table.when")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {recent.map((r) => (
                       <tr key={r.id} className={r.agrees ? undefined : "is-flagged"}>
-                        <td className="mono" data-label={t("table.field")}>{r.patch_id}</td>
-                        <td data-label={t("table.assessment")}>
-                          <span className="badge badge--accent">{r.score}</span>
+                        <td data-label={t("table.field")}>
+                          <span className="cell-stack">
+                            <span className="mono cell-id" title={r.patch_id}>{shortId(r.patch_id)}</span>
+                            <span className="tiny muted">
+                              {t("table.datasetLabel")}: {r.dataset_label ?? "—"}
+                            </span>
+                          </span>
                         </td>
-                        <td className="muted" data-label={t("table.datasetLabel")}>{r.dataset_label ?? "—"}</td>
+                        <td data-label={t("table.assessment")}>
+                          <ScoreBadge score={r.score} classes={classes} t={t} />
+                        </td>
                         <td data-label={t("table.reviewer")}>
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                            <span className="avatar avatar--sm">{initials(r.reviewer)}</span>
-                            {r.reviewer}
+                          <span className="who" title={r.reviewer}>
+                            <span className="avatar avatar--sm" aria-hidden="true">{initials(r.reviewer)}</span>
+                            <span className="who__name">{r.reviewer}</span>
                           </span>
                         </td>
                         <td data-label={t("table.concordant")}>
-                          {r.agrees ? (
-                            <span className="badge badge--ok">
-                              <Icon name="check" size={11} /> {t("common.yes")}
-                            </span>
-                          ) : (
-                            <span className="badge badge--warn">
-                              <Icon name="alert" size={11} /> {t("table.flagged")}
-                            </span>
-                          )}
+                          <ConcordBadge agrees={r.agrees} t={t} />
                         </td>
-                        <td className="muted tiny" data-label={t("table.when")}>{relativeTime(r.at, t, locale)}</td>
+                        <td className="num muted tiny nowrap" data-label={t("table.when")}>
+                          {relativeTime(r.at, t, locale)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -261,35 +215,29 @@ export default function Dashboard() {
 
         {/* ------------------------------------------------------- rail --- */}
         <div className="dash-col">
-          <section className="card card--pad rise">
-            <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
+          <section className="card card--pad rise profile-card">
+            <div className="profile-card__who">
               <span className="avatar avatar--lg" style={avatarStyle(user.accent)}>
                 {initials(user.name)}
               </span>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700 }}>{user.name}</div>
+                <div className="profile-card__name">{user.name}</div>
                 <div className="tiny muted">{t(user.roleKey ?? "demo.role")}</div>
               </div>
             </div>
-            <p className="tiny muted" style={{ marginTop: 12 }}>
-              {t(user.deptKey ?? "demo.department")}
-            </p>
-            <hr className="divider" style={{ margin: "16px 0" }} />
-            <div style={{ display: "flex", gap: 20 }}>
+            <p className="tiny muted">{t(user.deptKey ?? "demo.department")}</p>
+            <div className="profile-card__stats">
               <div>
-                <div className="kpi__value" style={{ fontSize: "1.4rem" }}>
-                  {stats.total}
-                </div>
-                <div className="tiny muted">{t("dash.signOffs")}</div>
+                <b>{stats.mine}</b>
+                <span>{t("dash.yours")}</span>
               </div>
               <div>
-                <div className="kpi__value" style={{ fontSize: "1.4rem" }}>
-                  {stats.flagged}
-                </div>
-                <div className="tiny muted">{t("dash.flagged")}</div>
+                <b>{stats.total}</b>
+                <span>{t("dash.team")}</span>
               </div>
-              <div style={{ marginLeft: "auto" }}>
-                <Sparkline values={DEMO_THROUGHPUT.map((d) => d.count)} width={104} height={38} />
+              <div>
+                <b>{stats.week.current}</b>
+                <span>{t("dash.thisWeek")}</span>
               </div>
             </div>
           </section>
@@ -301,30 +249,7 @@ export default function Dashboard() {
                 <p className="sub">{t("dash.mixSub")}</p>
               </div>
             </div>
-            <div style={{ display: "grid", gap: 13 }}>
-              {distribution.map((d) => (
-                <div key={d.label} style={{ display: "grid", gap: 5 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem" }}>
-                    <span style={{ fontWeight: 600 }}>
-                      <span className="swatch" style={{ background: d.color }} />
-                      {d.label}
-                    </span>
-                    <span className="num muted">{d.count}</span>
-                  </div>
-                  <div style={{ height: 7, borderRadius: 99, background: "var(--surface-sunken)", overflow: "hidden" }}>
-                    <div
-                      style={{
-                        width: `${(d.count / maxBucket) * 100}%`,
-                        height: "100%",
-                        background: d.color,
-                        borderRadius: 99,
-                        transition: "width 700ms cubic-bezier(.32,.72,0,1)",
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
+            <ClassBars rows={distribution} />
           </section>
 
           <section className="card card--pad rise">
@@ -334,11 +259,9 @@ export default function Dashboard() {
                 <p className="sub">{t("dash.concordanceSub")}</p>
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <Donut value={stats.concordance} size={86} stroke={10} label={t("dash.concordance")} />
-              <p className="hint">
-                {t("dash.concordanceNote")}
-              </p>
+            <div className="concord">
+              <Donut value={stats.concordance} size={92} stroke={10} label={t("dash.concordance")} />
+              <p className="hint">{t("dash.concordanceNote")}</p>
             </div>
           </section>
 
@@ -349,13 +272,15 @@ export default function Dashboard() {
                 <p className="sub">{t("dash.deploymentSub")}</p>
               </div>
               <Link className="btn btn--ghost btn--sm" to="/model">
-                {t("nav.model")}
+                {t("nav.model")} <Icon name="arrowRight" size={14} />
               </Link>
             </div>
-            <dl className="spec-list" style={{ fontSize: "0.75rem" }}>
+            <dl className="spec-list spec-list--tight">
               <div>
                 <dt>{t("common.run")}</dt>
-                <dd className="mono">{context?.provenance?.run ?? "—"}</dd>
+                <dd className="mono" title={context?.provenance?.run}>
+                  {context?.provenance?.run ? runName(context.provenance.run) : "—"}
+                </dd>
               </div>
               <div>
                 <dt>{t("common.epoch")}</dt>
@@ -367,7 +292,12 @@ export default function Dashboard() {
               </div>
               <div>
                 <dt>{t("dash.source")}</dt>
-                <dd>{t(context?.demo ? "dash.sourceDemo" : "dash.sourceLive")}</dd>
+                <dd>
+                  <span className="status">
+                    <span className="pulse-dot" data-tone={context?.demo ? "warn" : "ok"} />
+                    {t(context?.demo ? "dash.sourceDemo" : "dash.sourceLive")}
+                  </span>
+                </dd>
               </div>
             </dl>
           </section>
@@ -377,21 +307,124 @@ export default function Dashboard() {
   );
 }
 
-function Kpi({ icon, label, value, foot }) {
-  return (
-    <article className="card kpi card--lift">
-      <div className="kpi__top">
-        <div>
-          <div className="kpi__label">{label}</div>
-          <div className="kpi__value" style={{ marginTop: 8 }}>
-            {value}
+/* -------------------------------------------------------------- pieces --- */
+
+function Bench({ analysis, classes, t, navigate }) {
+  if (!analysis) {
+    return (
+      <section className="card card--pad rise">
+        <div className="card-head">
+          <div>
+            <h2>{t("dash.benchOff")}</h2>
+            <p className="sub">{t("dash.benchSubOff")}</p>
           </div>
         </div>
-        <span className="kpi__icon">
-          <Icon name={icon} size={18} />
-        </span>
+        <div className="empty" style={{ padding: "26px 16px" }}>
+          <span className="empty__art">
+            <Icon name="slides" size={28} strokeWidth={1.5} />
+          </span>
+          <p>{t("dash.benchEmpty")}</p>
+          <button type="button" className="btn btn--primary" onClick={() => navigate("/analysis")}>
+            <Icon name="scan" size={16} /> {t("dash.chooseField")}
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  // The same "what does the data say this field is, and how much of that is
+  // here" framing as the Analysis page's Key Result -- the largest-area class
+  // only stands in when there is no dataset label to key off.
+  const labelled = analysis.dataset_label ? classForLabel(classes, analysis.dataset_label) : null;
+  const fallback = labelled ? null : dominantClass(analysis.model_percentages);
+  const focus = labelled ?? classes.find((c) => c.name === fallback?.[0]) ?? null;
+  const focusLabel = focus ? labelForClassName(classes, focus.name) : null;
+  const image = (focus && analysis.isolate?.[focus.name]) || analysis.images?.model;
+
+  return (
+    <section className="card bench rise">
+      <div className="bench__media">
+        {image ? <img src={image} alt={t("analysis.views.isolate", { label: focusLabel ?? "" })} /> : null}
+        {focusLabel ? <span className="bench__chip">{t("analysis.views.isolate", { label: focusLabel })}</span> : null}
       </div>
+      <div className="bench__body">
+        <div className="card-head" style={{ marginBottom: 6 }}>
+          <div style={{ minWidth: 0 }}>
+            <h2>{t("dash.benchOn")}</h2>
+            <p className="sub mono" title={analysis.patch_id}>
+              {shortId(analysis.patch_id)} · {analysis.width}×{analysis.height}
+            </p>
+          </div>
+          <Link className="btn btn--soft btn--sm" to="/analysis">
+            {t("dash.open")} <Icon name="arrowRight" size={14} />
+          </Link>
+        </div>
+
+        <div className="eyebrow">
+          {analysis.dataset_label
+            ? t("analysis.sourceLabel", { label: analysis.dataset_label })
+            : t("dash.largestClass")}
+        </div>
+        <div className="bench__figure">
+          <b style={{ "--mark": focus?.color }}>{focusLabel ?? "—"}</b>
+          <span>
+            {t("dash.measurementNotScore", { pct: pct(analysis.model_percentages?.[focus?.name]) })}
+          </span>
+        </div>
+
+        <StackBar
+          segments={classes
+            .filter((c) => c.index > 0)
+            .map((c) => ({ label: c.name, value: analysis.model_percentages?.[c.name] ?? 0, color: c.color }))}
+          height={10}
+        />
+        <div className="legend legend--plain">
+          {classes
+            .filter((c) => c.index > 0)
+            .map((c) => (
+              <span key={c.name}>
+                <i style={{ background: c.color }} />
+                {c.name} <b className="num">{pct(analysis.model_percentages?.[c.name] ?? 0)}</b>
+              </span>
+            ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Kpi({ icon, label, value, foot, trend, meter, tone }) {
+  return (
+    <article className={`card kpi${tone ? ` kpi--${tone}` : ""}`}>
+      <div className="kpi__top">
+        <span className="kpi__icon">
+          <Icon name={icon} size={17} />
+        </span>
+        <div className="kpi__label">{label}</div>
+      </div>
+      <div className="kpi__mid">
+        <div className="kpi__value">{value}</div>
+        {trend}
+      </div>
+      {meter != null ? (
+        <div className="meter" aria-hidden="true">
+          <span style={{ width: `${Math.max(0, Math.min(100, meter))}%` }} />
+        </div>
+      ) : null}
       <div className="kpi__foot">{foot}</div>
     </article>
+  );
+}
+
+function Delta({ delta, text }) {
+  const tone = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  return (
+    <>
+      <span className={`trend trend--${tone}`}>
+        <Icon name={delta < 0 ? "arrowDown" : "arrowUp"} size={12} />
+        {delta > 0 ? `+${delta}` : delta}
+      </span>
+      <span>{text}</span>
+    </>
   );
 }

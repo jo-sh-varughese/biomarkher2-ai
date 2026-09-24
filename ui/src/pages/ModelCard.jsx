@@ -5,7 +5,9 @@
    would be worse than having no model card at all. */
 
 import Icon from "../components/Icon.jsx";
+import { HeatLegend } from "../components/charts/Charts.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
+import { runName } from "../lib/format.js";
 import { useT } from "../i18n/I18nContext.jsx";
 
 const SPEC_KEYS = ["intendedUse", "task", "indication", "inputs", "outputs", "targets", "site"];
@@ -114,7 +116,7 @@ export default function ModelCard() {
             <dl className="spec-list" style={{ fontSize: "0.8125rem" }}>
               <div>
                 <dt>{t("common.run")}</dt>
-                <dd className="mono">{p?.run ?? "—"}</dd>
+                <dd className="mono" title={p?.run}>{p?.run ? runName(p.run) : "—"}</dd>
               </div>
               <div>
                 <dt>{t("common.epoch")}</dt>
@@ -178,6 +180,15 @@ export default function ModelCard() {
             <p className="hint" style={{ marginTop: 14 }}>
               {t("model.classesNote")}
             </p>
+            {context?.heatmap_legend ? (
+              <div style={{ marginTop: 18 }}>
+                <HeatLegend
+                  legend={context.heatmap_legend}
+                  title={t("analysis.heatLegend")}
+                  lowLabel={t("analysis.heatLow")}
+                />
+              </div>
+            ) : null}
           </section>
         </div>
       </div>

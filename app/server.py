@@ -25,6 +25,7 @@ import json
 import random
 import sys
 import threading
+import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -82,11 +83,16 @@ class State:
         patch_root: Path,
         review_log: Path,
         ui_dist: Path | None = None,
+        annotations_log: Path | None = None,
     ):
         self.analyzer = analyzer
         self.patch_root = patch_root
         self.review_log = review_log
         self.ui_dist = Path(ui_dist) if ui_dist is not None else UI_DIST_DEFAULT
+        self.annotations_log = (
+            Path(annotations_log) if annotations_log is not None
+            else self.review_log.parent / "annotations.jsonl"
+        )
         self.lock = threading.Lock()
         self.samples = self._collect_samples()
 
@@ -120,13 +126,94 @@ class State:
             raise FileNotFoundError(f"No such sample patch: {patch_id}")
         return np.array(Image.open(path).convert("RGB"))
 
+    def dataset_label(self, patch_id: str) -> str | None:
+        """The folder label ("0" / "1+" / "2+" / "3+") a sample patch was
+        drawn from, or None for an uploaded image -- this is a fact about
+        the DATA, not the model's output, which is exactly why the frontend
+        leads with it: "what does the dataset say this field is" is the
+        question a pathologist actually wants answered before "and how much
+        of that is measured where"."""
+        return next((s["folder_label"] for s in self.samples if s["id"] == patch_id), None)
+
     def record_review(self, entry: dict) -> None:
         entry["recorded_at"] = datetime.now(timezone.utc).isoformat()
         entry["run"] = self.analyzer.provenance["run"]
+        entry.setdefault("dataset_label", self.dataset_label(entry.get("patch_id", "")))
         with self.lock:
             self.review_log.parent.mkdir(parents=True, exist_ok=True)
             with self.review_log.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def read_reviews(self) -> list[dict]:
+        """The review log, newest first, in the shape the portal renders.
+
+        The log is the record of truth the Case log page says it is a view
+        of; before this existed the portal could only show reviews cached in
+        one browser's localStorage, padded out with seeded demo rows that
+        looked exactly like real sign-offs. An entry whose line fails to
+        parse is skipped rather than failing the whole page -- the log is
+        append-only and a half-written last line should not blank the history.
+        """
+        if not self.review_log.is_file():
+            return []
+        with self.lock:
+            lines = self.review_log.read_text(encoding="utf-8").splitlines()
+        rows = []
+        for number, line in enumerate(lines):
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            measurements = entry.get("measurements") or {}
+            rows.append({
+                "id": f"log-{number}",
+                "at": entry.get("recorded_at"),
+                "patch_id": entry.get("patch_id", ""),
+                "score": entry.get("score", ""),
+                "agrees": bool(entry.get("agrees_with_measurements", False)),
+                "reviewer": entry.get("reviewer", ""),
+                "notes": entry.get("notes", ""),
+                "dataset_label": entry.get("dataset_label")
+                or self.dataset_label(entry.get("patch_id", "")),
+                "tissue_percent": measurements.get("tissue_percent"),
+                "run": entry.get("run"),
+            })
+        rows.reverse()
+        return rows
+
+    def record_annotation(self, entry: dict) -> dict:
+        """Append a region annotation and return it with its id and
+        timestamp filled in -- the caller (the HTTP handler) hands this
+        straight back to the browser so it can add the saved box to the
+        view without a second round trip to re-fetch it."""
+        entry = dict(entry)
+        entry["id"] = f"ann-{uuid.uuid4().hex[:12]}"
+        entry["recorded_at"] = datetime.now(timezone.utc).isoformat()
+        with self.lock:
+            self.annotations_log.parent.mkdir(parents=True, exist_ok=True)
+            with self.annotations_log.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return entry
+
+    def read_annotations(self, patch_id: str) -> list[dict]:
+        """Every annotation on record for one field, in the order they were
+        saved. Appended-only, like the review log -- there is no delete or
+        edit route, on the same reasoning record_review's docstring gives:
+        this is a log, not a database, and re-reads it from disk every call
+        rather than caching, which is fine at the scale a local demo log
+        ever reaches."""
+        if not patch_id or not self.annotations_log.is_file():
+            return []
+        with self.lock:
+            text = self.annotations_log.read_text(encoding="utf-8")
+        out = []
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if entry.get("patch_id") == patch_id:
+                out.append(entry)
+        return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -163,10 +250,20 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         if path == "/api/context":
             return self._json(200, self._context())
+        if path == "/api/reviews":
+            return self._json(200, {"reviews": self.state.read_reviews()})
         if path.startswith("/api/"):
             return self._json(404, {"error": f"No such path: {path}"})
         if path.startswith("/static/"):
             return self._asset(path[len("/static/"):])
+        # A path whose last segment looks like a file (/fonts/x.woff2,
+        # /favicon.ico) is a request for a file, never a page: serve it from
+        # the build if it is there, and 404 if not. Falling through to the
+        # SPA shell instead hands the browser index.html to decode as a
+        # font, which is exactly the "OTS parsing error: invalid sfntVersion"
+        # (0x3C21646F = "<!do") the console used to show.
+        if "." in path.rsplit("/", 1)[-1]:
+            return self._asset(path.lstrip("/"))
         # Everything else is a client-side route of the React portal
         # (/, /login, /analysis, /cases, ...) -- the portal's own router
         # decides what that path means, so every one of them gets the same
@@ -185,6 +282,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._report(payload)
             if path == "/api/review":
                 return self._json(200, self._review(payload))
+            if path == "/api/annotations":
+                return self._json(200, self._annotation(payload))
             self._json(404, {"error": f"No such path: {path}"})
         except (FileNotFoundError, ValueError, binascii.Error) as exc:
             self._json(400, {"error": str(exc)})
@@ -225,6 +324,7 @@ class Handler(BaseHTTPRequestHandler):
                 for c in range(NUM_CLASSES)
             ],
             "review_choices": REVIEW_CHOICES,
+            "heatmap_legend": self.state.analyzer.heatmap_legend(),
             "caveats": {
                 "not_a_score": NOT_A_SCORE,
                 "model_limitation": MODEL_LIMITATION,
@@ -246,7 +346,10 @@ class Handler(BaseHTTPRequestHandler):
             patch_id = str(payload.get("name") or "uploaded image")
         else:
             raise ValueError("Send either patch_id or image")
-        return self.state.analyzer.analyze(rgb, patch_id=patch_id).to_dict()
+        result = self.state.analyzer.analyze(rgb, patch_id=patch_id).to_dict()
+        result["dataset_label"] = self.state.dataset_label(patch_id)
+        result["annotations"] = self.state.read_annotations(patch_id)
+        return result
 
     def _report(self, payload: dict) -> None:
         """Re-run the analysis and stream it back as a PDF, not JSON.
@@ -286,6 +389,48 @@ class Handler(BaseHTTPRequestHandler):
         self.state.record_review(entry)
         return {"ok": True, "log": str(self.state.review_log)}
 
+    def _annotation(self, payload: dict) -> dict:
+        """A pathologist-marked region on one field: a box (as fractions of
+        the image, 0-1, so it survives being viewed at any size) plus a note
+        and/or a score for just that region -- narrower than a whole-field
+        review, for "look here" rather than "here is my overall read"."""
+        patch_id = str(payload.get("patch_id", "")).strip()
+        if not patch_id:
+            raise ValueError("patch_id is required")
+
+        coords = {}
+        for name in ("x", "y", "w", "h"):
+            try:
+                value = float(payload.get(name))
+            except (TypeError, ValueError):
+                raise ValueError(f"{name} must be a number") from None
+            if not (0.0 <= value <= 1.0):
+                raise ValueError(f"{name} must be between 0 and 1 (a fraction of the image)")
+            coords[name] = value
+        if coords["w"] <= 0 or coords["h"] <= 0:
+            raise ValueError("w and h must be positive")
+        if coords["x"] + coords["w"] > 1.0 or coords["y"] + coords["h"] > 1.0:
+            raise ValueError("the region must fit inside the image (x+w and y+h must be <= 1)")
+
+        score = str(payload.get("score", "")).strip()
+        if score and score not in REVIEW_CHOICES:
+            raise ValueError(f"score must be one of {REVIEW_CHOICES}")
+        note = str(payload.get("note", "")).strip()
+        if not note and not score:
+            raise ValueError("Add a note or a score for this region")
+
+        entry = {
+            "patch_id": patch_id,
+            **coords,
+            "note": note,
+            "score": score,
+            "reviewer": str(payload.get("reviewer", "")).strip(),
+        }
+        if not entry["reviewer"]:
+            raise ValueError("A reviewer name or initials is required")
+        saved = self.state.record_annotation(entry)
+        return {"ok": True, "annotation": saved}
+
 
 def build_argparser() -> argparse.ArgumentParser:
     """Shared by `python -m app.server` and the `biomark` command (app/cli.py)
@@ -297,6 +442,8 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--preprocessing", default="configs/preprocessing.yaml")
     parser.add_argument("--patch-root", default="data/raw")
     parser.add_argument("--reviews", default="artifacts/reviews.jsonl")
+    parser.add_argument("--annotations", default="artifacts/annotations.jsonl",
+                        help="JSONL log of pathologist-marked field regions.")
     parser.add_argument(
         "--conformal-alpha", type=float, default=0.10,
         help="Significance level for conformal prediction sets (only used if "
@@ -315,7 +462,9 @@ def build_argparser() -> argparse.ArgumentParser:
 def serve(args) -> int:
     print(f"Loading model from {args.run} ...")
     analyzer = Analyzer(args.run, args.config, args.preprocessing, args.conformal_alpha)
-    Handler.state = State(analyzer, Path(args.patch_root), Path(args.reviews), Path(args.ui_dist))
+    Handler.state = State(
+        analyzer, Path(args.patch_root), Path(args.reviews), Path(args.ui_dist), Path(args.annotations)
+    )
     print(f"Checkpoint epoch {analyzer.checkpoint_epoch}; "
           f"{len(Handler.state.samples)} sample patches indexed.")
     if analyzer.calibrator is not None:

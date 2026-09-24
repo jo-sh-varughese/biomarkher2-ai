@@ -35,13 +35,37 @@ function hashString(value) {
   return h >>> 0;
 }
 
+/* The same names and colours app/analysis.py serves -- a demo that looked
+   different from the live portal (it used to be grey/green/blue/magenta
+   here against the server's orange ramp) is a demo of something else. */
 export const DEMO_CLASSES = [
-  { index: 0, name: "Background", color: "#e9edf5" },
-  { index: 1, name: "HER2 0", color: "#94a3b8" },
-  { index: 2, name: "HER2 1+", color: "#34d399" },
-  { index: 3, name: "HER2 2+", color: "#3b82f6" },
-  { index: 4, name: "HER2 3+", color: "#c026d3" },
+  { index: 0, name: "background", color: "#f0f0f0" },
+  { index: 1, name: "negative", color: "#cfd8dc" },
+  { index: 2, name: "weak (1+)", color: "#eaa237" },
+  { index: 3, name: "moderate (2+)", color: "#e08214" },
+  { index: 4, name: "strong (3+)", color: "#8c3d04" },
 ];
+
+/** Tissue classes in order, keyed the way model_percentages and isolate are. */
+const ORDER = DEMO_CLASSES.slice(1).map((c) => c.name);
+const LABELS = ["0", "1+", "2+", "3+"];
+const homeOf = (label) => Math.max(0, LABELS.indexOf(label));
+
+/* Mirrors ISOLATE_INK and HEATMAP_STOPS in app/analysis.py. */
+const ISOLATE_INK = {
+  negative: "#78909c",
+  "weak (1+)": "#eaa237",
+  "moderate (2+)": "#e08214",
+  "strong (3+)": "#8c3d04",
+};
+const HEAT = ["#fff5c8", "#fec85a", "#f05f23", "#a50f28"];
+const HEAT_AT = [0, 0.3125, 0.625, 1];
+
+export const DEMO_HEATMAP_LEGEND = {
+  stops: HEAT.map((color, i) => ({ at: HEAT_AT[i], color })),
+  ticks: [1, 2, 3].map((i) => ({ at: HEAT_AT[i], label: ORDER[i] })),
+  fade_below: HEAT_AT[1],
+};
 
 export const DEMO_SAMPLES = [
   { id: "GMCK-0412-A3", folder_label: "0", note: "Resection, Ventana 4B5" },
@@ -71,7 +95,7 @@ export const DEMO_PROVENANCE = {
   checkpoint_sha: "9f2c41ae",
 };
 
-export const DEMO_REVIEW_CHOICES = ["0", "1+", "2+", "3+", "Cannot assess"];
+export const DEMO_REVIEW_CHOICES = ["0", "1+", "2+", "3+", "cannot assess from this field"];
 
 /* --------------------------------------------------------- field render --- */
 
@@ -154,13 +178,12 @@ const tissueShape = (tissue, id) =>
 /* Maps a blob's random draw onto an intensity class, weighted so the patch's
    dataset label dominates -- a "3+" example patch should look like one. */
 function classPicker(dominant) {
-  const order = ["HER2 0", "HER2 1+", "HER2 2+", "HER2 3+"];
-  const home = Math.max(0, order.indexOf(`HER2 ${dominant}`));
+  const home = homeOf(dominant);
   return (k) => {
-    if (k < 0.62) return order[home];
-    if (k < 0.82) return order[Math.max(0, home - 1)];
-    if (k < 0.95) return order[Math.min(3, home + 1)];
-    return order[Math.max(0, home - 2)];
+    if (k < 0.62) return ORDER[home];
+    if (k < 0.82) return ORDER[Math.max(0, home - 1)];
+    if (k < 0.95) return ORDER[Math.min(3, home + 1)];
+    return ORDER[Math.max(0, home - 2)];
   };
 }
 
@@ -168,10 +191,10 @@ const COLOR = Object.fromEntries(DEMO_CLASSES.map((c) => [c.name, c.color]));
 
 /* DAB brown at four strengths, for the "as scanned" panel. */
 const DAB = {
-  "HER2 0": "#d9c7b4",
-  "HER2 1+": "#c39a6b",
-  "HER2 2+": "#9c6432",
-  "HER2 3+": "#5d3312",
+  negative: "#d9c7b4",
+  "weak (1+)": "#c39a6b",
+  "moderate (2+)": "#9c6432",
+  "strong (3+)": "#5d3312",
 };
 
 function buildImages(seed, dominant) {
@@ -197,28 +220,72 @@ function buildImages(seed, dominant) {
     original: panel("#faf7f4", "#e4d9ce", (c) => DAB[pick(c.k)], 0.7),
     // The mask: section solid, everything else excluded.
     tissue: panel("#f1f2f8", "#5b45db", () => "#5b45db", 0.35),
-    model: panel("#f7f8fc", "#e9edf5", (c) => COLOR[pick(c.k)]),
+    // Class maps over a neutral grey field, as the server draws them.
+    model: panel("#f4f4f5", "#dcdde0", (c) => COLOR[pick(c.k)]),
     // The baseline is offset in class space rather than in geometry -- the
     // visible disagreement between the two panels is the point of showing it.
-    baseline: panel("#f7f8fc", "#e9edf5", (c) => COLOR[pick(c.k)], 0.92, 0.14),
+    baseline: panel("#f4f4f5", "#dcdde0", (c) => COLOR[pick(c.k)], 0.92, 0.14),
     // Deliberately a different palette from the class maps: this one is a
     // confidence map, and must not be misread as a fifth intensity class.
-    ambiguity: panel("#f7f8fc", "#e9edf5", (c) => (c.k > 0.62 ? "#fbbf24" : "#312e5e"), 0.88),
+    ambiguity: panel("#f7f8fc", "#e9edf5", (c) => (c.k > 0.62 ? "#b3286e" : "#c9d6d9"), 0.88),
+    // The demo's stand-in for the server's continuous DAB heatmap: each
+    // cell's own random draw on the same heat ramp, never bucketed.
+    heatmap: panel("#f4f4f5", "#e2e2e4", (c) => heatColor(c.k), 0.9),
   };
+}
+
+/* The demo's analogue of isolate_overlays(): one panel per class, each
+   painting only the cells classPicker assigned to that class, boldly, over
+   a washed-out field. */
+function isolateImages(seed, dominant) {
+  const { tissue, cells } = layout(seed);
+  const pick = classPicker(dominant);
+  const clip = `clipIso${Math.abs(seed) % 100000}`;
+  const section = tissue.map((t) => ellipse(t, "#ececee", 1, "edge")).join("");
+
+  return Object.fromEntries(
+    ORDER.map((name) => {
+      const layer = cells
+        .filter((c) => pick(c.k) === name)
+        .map((c) => ellipse(c, ISOLATE_INK[name], 0.95, "soft"))
+        .join("");
+      return [
+        name,
+        svg(
+          `${tissueShape(tissue, clip)}${section}<g clip-path="url(#${clip})">${layer}</g>`,
+          "#fafafa",
+          (Math.abs(seed) % 90) + 3,
+        ),
+      ];
+    }),
+  );
+}
+
+const hexRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+
+/* HEAT, interpolated at the same positions as the server's colour bar. */
+function heatColor(k) {
+  const x = Math.max(0, Math.min(1, k));
+  let i = 0;
+  while (i < HEAT_AT.length - 2 && x > HEAT_AT[i + 1]) i += 1;
+  const t = (x - HEAT_AT[i]) / (HEAT_AT[i + 1] - HEAT_AT[i]);
+  const a = hexRgb(HEAT[i]);
+  const b = hexRgb(HEAT[i + 1]);
+  const [r, g, bl] = a.map((v, idx) => Math.round(v + (b[idx] - v) * t));
+  return `rgb(${r},${g},${bl})`;
 }
 
 /* --------------------------------------------------------- measurements --- */
 
 function percentages(seed, dominant, jitter) {
   const next = rng(seed + jitter);
-  const order = ["HER2 0", "HER2 1+", "HER2 2+", "HER2 3+"];
-  const home = Math.max(0, order.indexOf(`HER2 ${dominant}`));
-  const raw = order.map((_, i) => {
+  const home = homeOf(dominant);
+  const raw = ORDER.map((_, i) => {
     const distance = Math.abs(i - home);
     return Math.max(0.4, (distance === 0 ? 58 : distance === 1 ? 17 : 5) * (0.72 + next() * 0.6));
   });
   const total = raw.reduce((a, b) => a + b, 0);
-  return Object.fromEntries(order.map((name, i) => [name, (raw[i] / total) * 100]));
+  return Object.fromEntries(ORDER.map((name, i) => [name, (raw[i] / total) * 100]));
 }
 
 export function demoAnalysis(patchId, displayName) {
@@ -241,8 +308,14 @@ export function demoAnalysis(patchId, displayName) {
     tissue_percent: 38 + rng(seed + 31)() * 28,
     disagreement_percent: disagreement,
     images: buildImages(seed, dominant),
+    isolate: isolateImages(seed, dominant),
     model_percentages: model,
     baseline_percentages: baseline,
+    // Demo mode has no server-side log to read these back from, so a fresh
+    // analyse() always starts empty here -- an annotation saved against a
+    // demo field survives only until the next "Analyse" click, which
+    // saveAnnotation's own toast copy says plainly.
+    annotations: [],
     caveats: DEMO_CAVEATS,
     conformal: {
       available: true,
@@ -260,74 +333,57 @@ export function demoContext() {
     samples: DEMO_SAMPLES,
     classes: DEMO_CLASSES,
     review_choices: DEMO_REVIEW_CHOICES,
+    heatmap_legend: DEMO_HEATMAP_LEGEND,
     caveats: DEMO_CAVEATS,
   };
 }
 
-/* Seed rows for the Cases table, so the list is not empty before the first
-   review of a session is recorded. */
-export const DEMO_REVIEWS = [
-  {
-    id: "r-1041",
-    patch_id: "GMCK-0688-C2",
-    score: "2+",
-    agrees: true,
-    reviewer: "Dr. A. Menon",
-    noteKey: "demo.notes.heterogeneous",
-    at: "2026-09-09T11:42:00",
-    dataset_label: "2+",
-    tissue_percent: 61.4,
-  },
-  {
-    id: "r-1040",
-    patch_id: "GMCK-0804-D4",
-    score: "3+",
-    agrees: true,
-    reviewer: "Dr. S. Pillai",
-    noteKey: "demo.notes.strong",
-    at: "2026-09-09T10:05:00",
-    dataset_label: "3+",
-    tissue_percent: 72.8,
-  },
-  {
-    id: "r-1039",
-    patch_id: "GMCK-0412-A3",
-    score: "1+",
-    agrees: false,
-    reviewer: "Dr. A. Menon",
-    noteKey: "demo.notes.crush",
-    at: "2026-09-08T16:20:00",
-    dataset_label: "0",
-    tissue_percent: 48.2,
-  },
-  {
-    id: "r-1038",
-    patch_id: "GMCK-0517-B1",
-    score: "1+",
-    agrees: true,
-    reviewer: "Dr. R. Thomas",
-    noteKey: null,
-    at: "2026-09-08T09:15:00",
-    dataset_label: "1+",
-    tissue_percent: 57.9,
-  },
-  {
-    id: "r-1037",
-    patch_id: "GMCK-0912-B7",
-    score: "Cannot assess",
-    agrees: false,
-    reviewer: "Dr. R. Thomas",
-    noteKey: "demo.notes.insufficient",
-    at: "2026-09-07T14:48:00",
-    dataset_label: "1+",
-    tissue_percent: 31.1,
-  },
+/* The demo review history. Every demo chart -- KPIs, throughput, the
+   assessment mix, the case log -- is computed from these same rows, so the
+   numbers on one card can never contradict another. Timestamps are relative
+   to now, or a demo opened next month would show an empty fortnight. */
+const HOUR = 3600000;
+const HAND_WRITTEN = [
+  { patch_id: "GMCK-0688-C2", score: "2+", agrees: true, reviewer: "Dr. A. Menon",
+    noteKey: "demo.notes.heterogeneous", ago: 3 * HOUR, dataset_label: "2+", tissue_percent: 61.4 },
+  { patch_id: "GMCK-0804-D4", score: "3+", agrees: true, reviewer: "Dr. S. Pillai",
+    noteKey: "demo.notes.strong", ago: 7 * HOUR, dataset_label: "3+", tissue_percent: 72.8 },
+  { patch_id: "GMCK-0412-A3", score: "1+", agrees: false, reviewer: "Dr. A. Menon",
+    noteKey: "demo.notes.crush", ago: 27 * HOUR, dataset_label: "0", tissue_percent: 48.2 },
+  { patch_id: "GMCK-0517-B1", score: "1+", agrees: true, reviewer: "Dr. R. Thomas",
+    noteKey: null, ago: 30 * HOUR, dataset_label: "1+", tissue_percent: 57.9 },
+  { patch_id: "GMCK-0912-B7", score: "cannot assess from this field", agrees: false,
+    reviewer: "Dr. R. Thomas", noteKey: "demo.notes.insufficient", ago: 52 * HOUR,
+    dataset_label: "1+", tissue_percent: 31.1 },
 ];
 
-/* Throughput for the dashboard's activity chart: the last 14 days. */
-export const DEMO_THROUGHPUT = [
-  6, 9, 4, 12, 15, 11, 8, 14, 19, 16, 10, 21, 17, 23,
-].map((count, i, all) => ({
-  day: new Date(Date.now() - (all.length - 1 - i) * 86400000),
-  count,
+function generatedHistory() {
+  const next = rng(20260924);
+  const reviewers = ["Dr. A. Menon", "Dr. S. Pillai", "Dr. R. Thomas"];
+  const scores = ["0", "1+", "1+", "2+", "2+", "3+", "3+", "0"];
+  const rows = [];
+  for (let day = 3; day < 14; day += 1) {
+    const perDay = Math.floor(next() * 4);
+    for (let j = 0; j < perDay; j += 1) {
+      const score = scores[Math.floor(next() * scores.length)];
+      const agrees = next() > 0.22;
+      rows.push({
+        patch_id: `GMCK-${String(300 + Math.floor(next() * 600)).padStart(4, "0")}-${"ABCD"[Math.floor(next() * 4)]}${1 + Math.floor(next() * 8)}`,
+        score,
+        agrees,
+        reviewer: reviewers[Math.floor(next() * reviewers.length)],
+        noteKey: null,
+        ago: day * 24 * HOUR + Math.floor(next() * 9) * HOUR,
+        dataset_label: agrees ? score : LABELS[Math.max(0, homeOf(score) - 1)],
+        tissue_percent: Math.round((34 + next() * 40) * 10) / 10,
+      });
+    }
+  }
+  return rows;
+}
+
+export const DEMO_REVIEWS = [...HAND_WRITTEN, ...generatedHistory()].map(({ ago, ...row }, i) => ({
+  id: `demo-${i}`,
+  at: new Date(Date.now() - ago).toISOString(),
+  ...row,
 }));

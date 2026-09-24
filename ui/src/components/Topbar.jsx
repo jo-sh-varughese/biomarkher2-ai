@@ -1,12 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import Icon from "./Icon.jsx";
+import { ScoreBadge } from "./Badges.jsx";
 import { useAuth } from "../state/AuthContext.jsx";
 import { useTheme } from "../state/ThemeContext.jsx";
 import { avatarStyle } from "../state/AuthContext.jsx";
-import { initials } from "../lib/format.js";
+import { usePortal } from "../state/PortalContext.jsx";
+import { initials, relativeTime, shortId } from "../lib/format.js";
 import { LANGS, useI18n } from "../i18n/I18nContext.jsx";
 import LangToggle from "./LangToggle.jsx";
+
+const SEEN_KEY = "bmh2.activitySeen.v1";
+
+const readSeen = () => {
+  try {
+    return Number(localStorage.getItem(SEEN_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+};
 
 const TITLE_KEYS = {
   "/overview": "nav.overview",
@@ -22,15 +34,35 @@ export default function Topbar({ onOpenNav, onToggleRail, railCollapsed }) {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { resolved, toggle } = useTheme();
-  const { t, lang, setLang } = useI18n();
+  const { t, lang, setLang, locale } = useI18n();
+  const { reviews, context } = usePortal();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [seen, setSeen] = useState(readSeen);
   const menuRef = useRef(null);
+  const activityRef = useRef(null);
   const searchRef = useRef(null);
+
+  // "Unread" is sign-offs recorded since this browser last opened the panel.
+  const unread = reviews.filter((r) => new Date(r.at).getTime() > seen).length;
+  const openActivity = () => {
+    if (!activityOpen) {
+      const now = Date.now();
+      setSeen(now);
+      try {
+        localStorage.setItem(SEEN_KEY, String(now));
+      } catch {
+        /* Not remembering is fine; the dot just returns next session. */
+      }
+    }
+    setActivityOpen(!activityOpen);
+  };
 
   useEffect(() => {
     const onDocClick = (event) => {
+      if (activityRef.current && !activityRef.current.contains(event.target)) setActivityOpen(false);
       if (menuRef.current && !menuRef.current.contains(event.target)) {
         setMenuOpen(false);
         // Collapse the submenu too, so reopening the menu starts clean rather
@@ -40,6 +72,7 @@ export default function Topbar({ onOpenNav, onToggleRail, railCollapsed }) {
     };
     const onKey = (event) => {
       if (event.key === "Escape") {
+        setActivityOpen(false);
         // Escape backs out one level at a time, as a nested menu should.
         setLangOpen((open) => {
           if (open) return false;
@@ -121,9 +154,54 @@ export default function Topbar({ onOpenNav, onToggleRail, railCollapsed }) {
           <Icon name={resolved === "dark" ? "sun" : "moon"} size={18} />
         </button>
 
-        <button type="button" className="btn btn--ghost btn--icon" aria-label={t("topbar.notifications")}>
-          <Icon name="bell" size={18} />
-        </button>
+        <div style={{ position: "relative" }} ref={activityRef}>
+          <button
+            type="button"
+            className="btn btn--ghost btn--icon"
+            aria-label={t("topbar.activity")}
+            title={t("topbar.activity")}
+            aria-haspopup="dialog"
+            aria-expanded={activityOpen}
+            onClick={openActivity}
+          >
+            <Icon name="bell" size={18} />
+            {unread ? <span className="bell-dot" aria-hidden="true" /> : null}
+          </button>
+
+          {activityOpen ? (
+            <div className="menu activity" role="dialog" aria-label={t("topbar.activity")}>
+              <div className="activity__head">
+                <b>{t("topbar.activity")}</b>
+                <span className="tiny muted">{t("topbar.activitySub")}</span>
+              </div>
+              {reviews.length ? (
+                <ul className="activity__list">
+                  {reviews.slice(0, 5).map((r) => (
+                    <li key={r.id}>
+                      <ScoreBadge score={r.score} classes={context?.classes} t={t} />
+                      <div className="activity__text">
+                        <span className="mono" title={r.patch_id}>{shortId(r.patch_id)}</span>
+                        <span className="tiny muted">
+                          {r.reviewer} · {relativeTime(r.at, t, locale)}
+                        </span>
+                      </div>
+                      {r.agrees ? null : (
+                        <span className="activity__flag" title={t("table.flagged")}>
+                          <Icon name="alert" size={13} />
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="hint" style={{ padding: "10px 14px" }}>{t("topbar.activityEmpty")}</p>
+              )}
+              <Link to="/cases" className="menu__item activity__all" onClick={() => setActivityOpen(false)}>
+                {t("topbar.activityAll")} <Icon name="arrowRight" size={14} />
+              </Link>
+            </div>
+          ) : null}
+        </div>
 
         <div style={{ position: "relative" }} ref={menuRef}>
           <button

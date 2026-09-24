@@ -46,10 +46,22 @@
   /* --- HER2 intensity classes. These are *fallbacks*: the server sends the
      authoritative colours in /api/context and the UI prefers those, so the
      legend, the heatmap and the table can never drift apart. --- */
-  --her2-0:  #94a3b8;
-  --her2-1:  #34d399;
-  --her2-2:  #3b82f6;
-  --her2-3:  #c026d3;
+  --her2-0:  #cfd8dc;
+  --her2-1:  #eaa237;
+  --her2-2:  #e08214;
+  --her2-3:  #8c3d04;
+
+  /* --- the image viewer is always a dark instrument, in either theme: a
+     dark surround is how pathology and radiology viewers keep a stained
+     field's contrast legible, and it sets the imagery apart from the
+     measurement chrome around it. --- */
+  --viewer-bg:      #0b0d15;
+  --viewer-surface: #121521;
+  --viewer-raised:  #1a1e2e;
+  --viewer-line:    #242a3f;
+  --viewer-text:    #eef0f8;
+  --viewer-text-2:  #a4abc8;
+  --viewer-text-3:  #7b83a3;
 
   /* --- typography --- */
   /* Inter is listed first and Anek Malayalam second on purpose. Font matching
@@ -65,10 +77,10 @@
 
   /* --- radii --- */
   --r-xs: 8px;
-  --r-sm: 12px;
-  --r-md: 16px;
-  --r-lg: 22px;
-  --r-xl: 28px;
+  --r-sm: 11px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 22px;
   --r-pill: 999px;
 
   /* --- motion. One easing curve for everything that moves, one that
@@ -127,7 +139,7 @@
   --danger-soft: #fff1f2;
 
   --shadow-xs: 0 1px 2px rgba(27, 31, 49, 0.05);
-  --shadow-sm: 0 1px 3px rgba(27, 31, 49, 0.06), 0 6px 14px -8px rgba(27, 31, 49, 0.14);
+  --shadow-sm: 0 1px 2px rgba(27, 31, 49, 0.04), 0 4px 14px -8px rgba(27, 31, 49, 0.12);
   --shadow-md: 0 2px 6px rgba(27, 31, 49, 0.05), 0 18px 34px -18px rgba(27, 31, 49, 0.24);
   --shadow-lg: 0 4px 12px rgba(27, 31, 49, 0.06), 0 36px 64px -28px rgba(27, 31, 49, 0.3);
   --shadow-accent: 0 10px 26px -10px rgba(91, 69, 219, 0.62);

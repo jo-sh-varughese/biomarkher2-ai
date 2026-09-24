@@ -60,12 +60,85 @@ export const greetingKey = (date = new Date()) => {
 
 /** The class with the largest share, ignoring background. */
 export function dominantClass(percentages = {}) {
-  const entries = Object.entries(percentages).filter(([name]) => name !== "Background");
+  const entries = Object.entries(percentages).filter(([name]) => name.toLowerCase() !== "background");
   if (!entries.length) return null;
   return entries.reduce((best, entry) => (entry[1] > best[1] ? entry : best));
+}
+
+/* The server offers "cannot assess from this field"; older demo data says
+   "Cannot assess". Every comparison goes through this so neither wording can
+   silently fall out of a count, a filter, or a score picker again. */
+export const isCannotAssess = (score = "") => /^cannot assess/i.test(String(score).trim());
+
+/** A sample id like "test/class_2+/her2-2+-score_train_87.png", shortened to
+    what fits a table cell. The full id stays available as a tooltip. */
+export const shortId = (id = "") => {
+  const base = String(id).split(/[\\/]/).pop() || String(id);
+  return base.replace(/\.(png|jpe?g|tiff?)$/i, "");
+};
+
+/** "artifacts\\phase2_unet" -> "phase2_unet": a run is named by its folder. */
+export const runName = (run = "") => String(run).split(/[\\/]/).filter(Boolean).pop() || String(run);
+
+const DAY = 86400000;
+const dayKey = (value) => {
+  const d = new Date(value);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+
+/** Reviews per calendar day for the last `days` days, oldest first, zero-filled. */
+export function dailyCounts(reviews = [], days = 14, now = new Date()) {
+  const counts = new Map();
+  for (const r of reviews) {
+    if (!r.at) continue;
+    const key = dayKey(r.at);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Array.from({ length: days }, (_, i) => {
+    const day = new Date(today.getTime() - (days - 1 - i) * DAY);
+    return { day, count: counts.get(dayKey(day)) || 0 };
+  });
+}
+
+/** How many reviews fall in the last `days` days, and in the `days` before. */
+export function periodCounts(reviews = [], days = 7, now = Date.now()) {
+  let current = 0;
+  let previous = 0;
+  for (const r of reviews) {
+    const age = now - new Date(r.at).getTime();
+    if (Number.isNaN(age) || age < 0) continue;
+    if (age < days * DAY) current += 1;
+    else if (age < 2 * days * DAY) previous += 1;
+  }
+  return { current, previous, delta: current - previous };
 }
 
 /** Colour for a class name, preferring the server's own palette. */
 export function classColor(classes, name, fallback = "var(--text-3)") {
   return classes?.find((c) => c.name === name)?.color ?? fallback;
+}
+
+/* Dataset folder labels ("0", "1+", "2+", "3+") and the server's own class
+   names ("negative", "weak (1+)", ...) are two different vocabularies for
+   the same four tissue classes -- a folder label's class index is always
+   its position here plus 1, since index 0 is background and has no label
+   of its own. Kept here, derived from context.classes rather than a
+   hardcoded name list, so a wording change server-side cannot silently
+   desync the two. */
+export const LABEL_ORDER = ["0", "1+", "2+", "3+"];
+
+/** The server's class entry ({index, name, color}) for a dataset folder
+    label, or null if `classes` hasn't loaded yet or the label is unknown. */
+export function classForLabel(classes, label) {
+  const i = LABEL_ORDER.indexOf(label);
+  if (i === -1) return null;
+  return classes?.find((c) => c.index === i + 1) ?? null;
+}
+
+/** The inverse: the short dataset-style label ("2+") for a class name
+    ("moderate (2+)"), for display next to a percentage measured by name. */
+export function labelForClassName(classes, name) {
+  const found = classes?.find((c) => c.name === name);
+  return found ? (LABEL_ORDER[found.index - 1] ?? null) : null;
 }

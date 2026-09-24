@@ -40,7 +40,7 @@
   gap: 16px;
   margin: 6px 0 22px;
 }
-.page__head h1 { font-size: 1.6rem; }
+.page__head h1 { font-size: 1.75rem; font-weight: 750; letter-spacing: -0.032em; }
 .page__head .lede {
   margin-top: 6px;
   max-width: 62ch;
@@ -146,12 +146,21 @@
   font-weight: 700;
 }
 .nav__item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.nav__item.is-active::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
   background: var(--accent);
-  color: var(--on-accent);
-  box-shadow: var(--shadow-accent);
 }
 .nav__item.is-active svg { opacity: 1; }
-.nav__item.is-active .count { background: rgba(255, 255, 255, 0.2); color: inherit; }
+.nav__item.is-active .count { background: var(--accent); color: var(--on-accent); }
 
 .sidebar__spacer { flex: 1; min-height: 12px; }
 
@@ -169,7 +178,8 @@
   background: var(--accent);
   box-shadow: 0 0 0 2px var(--surface);
 }
-.nav__item.is-active .nav__pip { background: var(--on-accent); box-shadow: 0 0 0 2px var(--accent); }
+.nav__item.is-active .nav__pip { background: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.sidebar.is-rail .nav__item.is-active::before { left: -12px; }
 
 /* ----------------------------------------------------- collapsed rail --- */
 
@@ -380,17 +390,24 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 0 26px 16px;
-  padding: 9px 15px;
-  border-radius: var(--r-pill);
-  background: var(--warn-soft);
-  color: var(--warn);
-  border: 1px solid color-mix(in srgb, var(--warn) 24%, transparent);
+  margin: 0 26px 18px;
+  padding: 8px 14px 8px 10px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--warn-soft) 72%, var(--surface));
+  color: var(--text-2);
+  border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent);
   font-size: 0.75rem;
   line-height: 1.45;
 }
-.safety-strip svg { flex: none; }
-.safety-strip strong { font-weight: 700; }
+.safety-strip > svg {
+  flex: none;
+  box-sizing: content-box;
+  padding: 5px;
+  border-radius: 8px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+.safety-strip strong { font-weight: 700; color: var(--warn); }
 .safety-strip .spacer { flex: 1; }
 @media (max-width: 780px) {
   .safety-strip { margin: 0 16px 14px; border-radius: var(--r-md); align-items: flex-start; }
@@ -807,30 +824,171 @@
   gap: var(--gap);
 }
 
-.kpi { padding: 18px; display: grid; gap: 12px; }
-.kpi__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+/* A stat tile: label, the number (proportional figures -- tabular digits
+   look loose at this size), an optional 14-day trend or meter, and a foot
+   line that says what the number is measured against. */
+.kpi {
+  position: relative;
+  padding: 16px 18px 15px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  overflow: hidden;
+}
+.kpi::after {
+  /* A hairline of the tile's own tone along the top edge -- enough to key
+     the four tiles apart at a glance without four loud backgrounds. */
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, var(--kpi-tone, var(--accent)), transparent 70%);
+  opacity: 0.8;
+}
+.kpi--warn  { --kpi-tone: var(--warn); }
+.kpi--muted { --kpi-tone: var(--line-strong); }
+.kpi__top { display: flex; align-items: center; gap: 10px; }
 .kpi__icon {
-  width: 36px; height: 36px;
+  flex: none;
+  width: 30px; height: 30px;
   display: grid; place-items: center;
-  border-radius: 11px;
+  border-radius: 9px;
   background: var(--accent-soft);
   color: var(--accent-text);
 }
+.kpi--warn .kpi__icon  { background: var(--warn-soft); color: var(--warn); }
+.kpi--muted .kpi__icon { background: var(--surface-sunken); color: var(--text-2); }
 .kpi__label { font-size: 0.75rem; font-weight: 600; color: var(--text-2); }
+.kpi__mid {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 42px;
+}
 .kpi__value {
-  font-size: 1.9rem;
-  font-weight: 800;
-  letter-spacing: -0.04em;
+  font-size: 2.15rem;
+  font-weight: 750;
+  letter-spacing: -0.045em;
   line-height: 1;
-  font-variant-numeric: tabular-nums;
 }
 .kpi__value small { font-size: 0.9rem; font-weight: 600; color: var(--text-3); margin-left: 3px; letter-spacing: 0; }
-.kpi__foot { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: var(--text-3); }
+.kpi__foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 0.75rem;
+  color: var(--text-3);
+  line-height: 1.4;
+}
 
-.trend { display: inline-flex; align-items: center; gap: 3px; font-weight: 700; }
-.trend--up   { color: var(--ok); }
-.trend--down { color: var(--danger); }
-.trend--flat { color: var(--text-3); }
+/* A ratio against a whole: the unfilled track is a lighter step of the
+   fill's own ramp, so the state reads across the whole bar. */
+.meter { height: 6px; border-radius: 99px; background: var(--accent-soft-2); overflow: hidden; }
+.meter span {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--accent);
+  transition: width 700ms var(--ease);
+}
+
+.trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px 1px 4px;
+  border-radius: 99px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.trend--up   { color: var(--ok); background: var(--ok-soft); }
+.trend--down { color: var(--danger); background: var(--danger-soft); }
+.trend--flat { color: var(--text-3); background: var(--surface-sunken); }
+
+/* The field on the bench: the imagery in the viewer's dark surround on the
+   left, the measurement for the class that matters on the right. */
+.bench {
+  display: grid;
+  grid-template-columns: minmax(0, 270px) minmax(0, 1fr);
+  overflow: hidden;
+}
+.bench__media {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background:
+    radial-gradient(120% 90% at 50% 40%, var(--viewer-raised) 0%, var(--viewer-bg) 72%),
+    var(--viewer-bg);
+}
+.bench__media img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 16px 40px -14px rgba(0, 0, 0, 0.8);
+}
+.bench__chip {
+  position: absolute;
+  left: 26px;
+  top: 26px;
+  padding: 4px 10px;
+  border-radius: 99px;
+  background: rgba(11, 13, 21, 0.72);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.bench__body { padding: 20px 22px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.bench__figure { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
+.bench__figure span { font-size: 0.8125rem; color: var(--text-2); }
+
+/* A figure named by a class: the number in ink, the class colour carried by
+   the mark beside it -- never by the text itself, which at the 1+ step would
+   be pale amber on white. */
+.bench__figure b,
+.key-result__value b {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 2.6rem;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  color: var(--text);
+}
+.bench__figure b::before,
+.key-result__value b::before {
+  content: "";
+  flex: none;
+  width: 10px;
+  height: 30px;
+  border-radius: 3px;
+  background: var(--mark, var(--line-strong));
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.profile-card { display: grid; gap: 12px; }
+.profile-card__who { display: flex; align-items: center; gap: 13px; }
+.profile-card__name { font-weight: 700; letter-spacing: -0.01em; }
+.profile-card__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.profile-card__stats div { display: grid; gap: 2px; }
+.profile-card__stats div + div { padding-left: 14px; border-left: 1px solid var(--line-soft); }
+.profile-card__stats b { font-size: 1.35rem; font-weight: 750; letter-spacing: -0.03em; line-height: 1.1; }
+.profile-card__stats span { font-size: 0.6875rem; color: var(--text-3); font-weight: 600; }
+
+.concord { display: flex; align-items: center; gap: 18px; }
+.status { display: inline-flex; align-items: center; gap: 8px; }
 
 .dash-grid {
   display: grid;
@@ -878,6 +1036,48 @@ table.data tbody tr:hover { background: var(--surface-sunken); }
 table.data tbody tr:last-child td { border-bottom: 0; }
 table.data td.num, table.data th.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.data tr.is-flagged td:first-child { box-shadow: inset 2px 0 0 var(--warn); }
+table.data--compact td { padding: 10px 12px; }
+
+/* Ids are long ("test/class_2+/her2-2+-score_train_87.png"); the cell shows
+   the name and the row's title carries the full path, instead of the id
+   wrapping to three lines and pushing the last column out of its card. */
+.cell-id {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nowrap { white-space: nowrap; }
+.cell-stack { display: grid; gap: 1px; min-width: 160px; }
+/* The overview's compact table cannot afford full names beside readable
+   ids; the avatar carries the reviewer there (full name in its tooltip and
+   for screen readers), and the Case log keeps the names. Stacked on a phone,
+   each row has the width again, so the name comes back. */
+@media (min-width: 901px) {
+  .data--compact .who__name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+.who { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.who__name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+
+.badge--score {
+  background: var(--surface-sunken);
+  color: var(--text);
+  border-color: var(--line-soft);
+  font-variant-numeric: tabular-nums;
+}
+.badge--score i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
 
 .swatch {
   display: inline-block;
@@ -986,7 +1186,194 @@ table.data tr.is-flagged td:first-child { box-shadow: inset 2px 0 0 var(--warn);
   font-weight: 700;
   color: var(--text-2);
 }
-.legend i { width: 9px; height: 9px; border-radius: 3px; }
+.legend i { width: 9px; height: 9px; border-radius: 3px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1); }
+.legend b { font-weight: 700; color: var(--text); }
+
+/* Inline legend: swatch + label, no chip -- for captions and under charts,
+   where a row of pills is more chrome than the data beside it. */
+.legend--plain { gap: 6px 16px; }
+.legend--plain span {
+  padding: 0;
+  background: none;
+  border: 0;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+/* ------------------------------------------------------------- charts --- */
+
+/* Not ".ring": Tailwind (the landing page) scans every file under src/ and
+   would emit its own .ring box-shadow utility onto the same element. */
+.donut { position: relative; flex: none; }
+.donut__value {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+
+.stackbar { display: flex; border-radius: 4px; overflow: hidden; }
+.stackbar__seg { flex-basis: 0; min-width: 2px; transition: flex-grow 700ms var(--ease); }
+
+.compare-bars { display: grid; gap: 15px; }
+.compare-bars__row { display: grid; gap: 5px; }
+.compare-bars__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 0.75rem;
+}
+.compare-bars__head > span:first-child { font-weight: 600; }
+.compare-bars__head b { font-weight: 700; }
+.hbar { height: 8px; background: var(--surface-sunken); border-radius: 0 4px 4px 0; overflow: hidden; }
+.hbar--thin { height: 4px; }
+.hbar__fill { height: 100%; border-radius: 0 4px 4px 0; transition: width 700ms var(--ease); }
+
+.class-bars { display: grid; gap: 13px; }
+.class-bars__row {
+  display: grid;
+  grid-template-columns: minmax(0, 122px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.8125rem;
+}
+.class-bars__label {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.class-bars__label .swatch { flex: none; }
+.class-bars__track { height: 10px; border-radius: 0 4px 4px 0; background: var(--surface-sunken); overflow: hidden; }
+.class-bars__fill {
+  display: block;
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  transition: width 700ms var(--ease);
+}
+.class-bars__value { min-width: 58px; text-align: right; font-weight: 700; }
+.class-bars__value small { font-weight: 500; color: var(--text-3); }
+
+/* One series over days. y-ticks sit in a 26px gutter so the plot and the
+   day labels share one left edge. */
+.columns { display: grid; gap: 7px; }
+.columns__plot { position: relative; margin-left: 26px; }
+.columns__grid {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.columns__grid span { position: relative; height: 0; border-top: 1px solid var(--line-soft); }
+.columns__grid span:last-child { border-top-color: var(--line); }
+.columns__grid span::after {
+  content: attr(data-v);
+  position: absolute;
+  right: 100%;
+  top: -7px;
+  margin-right: 8px;
+  font-size: 0.625rem;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.columns__bars { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 4px; }
+.columns__slot {
+  position: relative;
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: default;
+}
+.columns__slot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.columns__bar {
+  width: min(24px, 72%);
+  border-radius: 4px 4px 0 0;
+  background: color-mix(in srgb, var(--accent) 52%, var(--surface));
+  transition: height 700ms var(--ease), background var(--t-fast) var(--ease);
+}
+.columns__bar.is-current { background: var(--accent); }
+.columns__slot.is-hover .columns__bar { background: var(--accent-hover); }
+.columns__label,
+.columns__tip {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.columns__label { font-size: 0.6875rem; font-weight: 700; color: var(--text-2); }
+.columns__tip {
+  z-index: 2;
+  display: grid;
+  gap: 1px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--surface-inverse);
+  color: var(--text-inverse);
+  font-size: 0.6875rem;
+  text-align: center;
+  box-shadow: var(--shadow-md);
+}
+.columns__tip b { font-size: 0.8125rem; }
+.columns__tip span { opacity: 0.75; }
+.columns__axis {
+  display: flex;
+  gap: 4px;
+  margin-left: 26px;
+  font-size: 0.625rem;
+  color: var(--text-3);
+}
+.columns__axis span { flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
+.columns__empty { margin: 4px 0 0 26px; font-size: 0.75rem; color: var(--text-3); }
+
+.sparkline { flex: none; overflow: visible; }
+
+/* The DAB heatmap's colour bar. Below the first threshold the heat fades in
+   over grey tissue, so the bar's low end is that grey too -- fading it to
+   the page background instead would read as "dark = unstained". */
+.heat-legend { display: grid; gap: 7px; width: min(100%, 440px); }
+.heat-legend__title {
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.heat-legend__bar {
+  position: relative;
+  height: 10px;
+  border-radius: 3px;
+  background:
+    linear-gradient(90deg, #c9ccd3 0, rgba(201, 204, 211, 0) var(--fade)),
+    var(--heat);
+}
+.heat-legend__tick {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--surface);
+}
+.heat-legend__labels { position: relative; height: 16px; font-size: 0.6875rem; color: var(--text-2); }
+.heat-legend__labels span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.heat-legend__labels span:first-child { transform: none; color: var(--text-3); }
+.heat-legend__labels span:last-child { transform: translateX(-100%); }
 
 /* ------------------------------------------------------------- analysis --- */
 
@@ -1039,18 +1426,69 @@ table.data tr.is-flagged td:first-child { box-shadow: inset 2px 0 0 var(--warn);
 }
 .key-result__value {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-top: 2px;
-}
-.key-result__value b {
-  font-size: 2.4rem;
-  font-weight: 800;
-  letter-spacing: -0.05em;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 12px;
 }
 .key-result__value span { font-size: 0.8125rem; color: var(--text-2); }
+
+/* Which of the four classes "how much, and where" currently answers for --
+   defaults to the field's own dataset label, but any of the four can be
+   picked, an upload included. */
+.class-picker { display: flex; gap: 6px; margin-top: 10px; }
+.class-pick {
+  flex: 1;
+  padding: 7px 4px;
+  border: 1.5px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: border-color var(--t-fast) var(--ease), background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+.class-pick:hover { border-color: var(--line-strong); }
+.class-pick.is-active {
+  border-color: var(--pick-color, var(--accent));
+  background: color-mix(in srgb, var(--pick-color, var(--accent)) 14%, var(--surface));
+  color: var(--text);
+}
+
+/* A small preview of the isolate overlay for the class in focus, doubling
+   as a shortcut into the full "Where" tab. */
+.key-result__where {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--t-fast) var(--ease);
+}
+.key-result__where:hover { border-color: var(--line-strong); }
+.key-result__where img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: none;
+}
+.key-result__where span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent-text);
+}
 
 .decision {
   margin-top: 15px;
@@ -1098,43 +1536,64 @@ table.data tr.is-flagged td:first-child { box-shadow: inset 2px 0 0 var(--warn);
 
 /* --- image viewer --- */
 
-.viewer { padding: 0; overflow: hidden; }
+/* The viewer is a dark instrument in both themes. Its tokens are re-scoped
+   here rather than every child restyled, so the tab strip, the tools, the
+   caption, and the annotation popovers inside it all pick up the dark set
+   through the same variables they use everywhere else. */
+.viewer {
+  --surface: var(--viewer-surface);
+  --surface-2: var(--viewer-raised);
+  --surface-sunken: var(--viewer-bg);
+  --line: var(--viewer-line);
+  --line-soft: #1b2031;
+  --line-strong: #353d5b;
+  --text: var(--viewer-text);
+  --text-2: var(--viewer-text-2);
+  --text-3: var(--viewer-text-3);
+  --accent: var(--violet-400);
+  --accent-hover: var(--violet-300);
+  --accent-soft: rgba(138, 124, 241, 0.16);
+  --accent-soft-2: rgba(138, 124, 241, 0.26);
+  --accent-text: var(--violet-300);
+  --on-accent: #0f1120;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface);
+  border-color: #1d2233;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 26px 50px -26px rgba(12, 14, 30, 0.6);
+}
 .viewer__bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: wrap;
-  padding: 13px 16px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--line);
-  background: var(--surface-2);
+  background: var(--surface);
 }
 .viewer__tabs {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
-  gap: 3px;
+  gap: 2px;
   padding: 3px;
-  border-radius: var(--r-pill);
+  border-radius: 11px;
   background: var(--surface-sunken);
   border: 1px solid var(--line-soft);
   overflow-x: auto;
-  max-width: 100%;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  /* Fade the trailing edge so a strip that continues past the screen looks
-     scrollable rather than truncated. The mask only bites once the strip
-     actually overflows, because a non-scrolling strip has nothing under it. */
-  mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent);
-  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 26px), transparent);
+  /* Fade the trailing edge so a strip that continues past its box looks
+     scrollable rather than truncated. */
+  mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 22px), transparent);
 }
 .viewer__tabs::-webkit-scrollbar { display: none; }
-/* Restore the square edge when everything fits, so the desktop pill is clean. */
-@media (min-width: 781px) {
-  .viewer__tabs { mask-image: none; -webkit-mask-image: none; }
-}
 .viewer__tab {
   flex: none;
-  padding: 6px 13px;
+  padding: 6px 10px;
   border: 0;
-  border-radius: var(--r-pill);
+  border-radius: 8px;
   background: transparent;
   color: var(--text-2);
   font-size: 0.75rem;
@@ -1143,42 +1602,95 @@ table.data tr.is-flagged td:first-child { box-shadow: inset 2px 0 0 var(--warn);
   cursor: pointer;
   transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
 }
-.viewer__tab:hover { color: var(--text); }
+.viewer__tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
 .viewer__tab.is-active {
-  background: var(--surface);
-  color: var(--text);
-  box-shadow: var(--shadow-xs);
+  background: #2a3050;
+  color: #fff;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+.viewer__tools { flex: none; display: flex; gap: 6px; }
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease);
+}
+.tool:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); background: rgba(255, 255, 255, 0.04); }
+.tool.is-on { background: var(--accent); border-color: transparent; color: var(--on-accent); }
+.tool.is-on:hover:not(:disabled) { background: var(--accent-hover); color: var(--on-accent); }
+.tool--icon { width: 32px; padding: 0; justify-content: center; }
+.tool:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Seven views need the width more than the tools need their words; below
+   this the tools keep their icon and their tooltip. */
+@media (max-width: 1500px) {
+  .tool:not(.tool--keep) span { display: none; }
+  .tool:not(.tool--keep) { width: 32px; padding: 0; justify-content: center; }
+}
+@media (max-width: 1320px) {
+  .tool span { display: none; }
+  .tool { width: 32px; padding: 0; justify-content: center; }
 }
 
 .viewer__stage {
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 380px;
-  padding: 22px;
+  min-height: 420px;
+  padding: 30px;
   background:
-    conic-gradient(from 90deg at 1px 1px, transparent 25%, var(--grid-line) 0) 0 0 / 24px 24px,
-    var(--surface-sunken);
+    radial-gradient(110% 85% at 50% 42%, var(--viewer-raised) 0%, var(--viewer-bg) 72%),
+    var(--viewer-bg);
   overflow: hidden;
 }
 .viewer__stage img {
-  max-height: 62vh;
-  border-radius: var(--r-sm);
-  box-shadow: var(--shadow-md);
+  max-height: 64vh;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 22px 60px -18px rgba(0, 0, 0, 0.85);
   image-rendering: -webkit-optimize-contrast;
   animation: fade var(--t-med) var(--ease) both;
   cursor: zoom-in;
-  transition: transform var(--t-med) var(--ease);
 }
-.viewer__stage img:hover { transform: scale(1.012); }
+.viewer__stage.is-annotating img { box-shadow: 0 0 0 2px var(--accent), 0 22px 60px -18px rgba(0, 0, 0, 0.85); }
+
+/* The mode pill: while drawing is on, say so where the drawing happens. */
+.viewer__mode {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--accent) 92%, transparent);
+  color: var(--on-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 10px 28px -10px var(--accent);
+  animation: fade var(--t-med) var(--ease) both;
+}
 
 /* Side-by-side compare: the second pane is revealed by a draggable wipe. */
 .compare {
   position: relative;
   display: inline-grid;
-  border-radius: var(--r-sm);
+  border-radius: 10px;
   overflow: hidden;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 22px 60px -18px rgba(0, 0, 0, 0.85);
   touch-action: none;
 }
 .compare img { grid-area: 1 / 1; max-height: 62vh; border-radius: 0; box-shadow: none; cursor: default; }
@@ -1208,14 +1720,126 @@ table.data tr.is-flagged td:first-child { box-shadow: inset 2px 0 0 var(--warn);
 }
 
 .viewer__caption {
-  padding: 13px 16px;
+  display: grid;
+  gap: 14px;
+  padding: 14px 16px 16px;
   border-top: 1px solid var(--line);
   font-size: 0.75rem;
   color: var(--text-2);
   line-height: 1.55;
   background: var(--surface);
 }
-.viewer__caption b { color: var(--text); display: block; margin-bottom: 2px; font-size: 0.8125rem; }
+.viewer__caption-text b { color: var(--text); display: block; margin-bottom: 2px; font-size: 0.8125rem; }
+
+/* --- field annotations: drag-to-mark regions over the viewer image --- */
+
+/* Wraps the <img> so the overlay below can be sized with position:absolute;
+   inset:0 and land exactly on the picture, not the padded stage around it.
+   No explicit size here on purpose -- as the sole centred grid item of
+   .viewer__stage (place-items: center) it already shrinks to the image's
+   own rendered box, the same box the image occupied before this wrapper
+   existed. */
+.viewer__frame { position: relative; }
+
+.annot-layer {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+/* Out of draw mode the layer lets clicks and swipes through to the image
+   (enlarge, page scroll on a phone), but saved boxes stay clickable. */
+.annot-layer.is-disabled { cursor: default; pointer-events: none; touch-action: auto; }
+.annot-layer.is-disabled .annot-box,
+.annot-layer .annot-popover,
+.annot-layer .annot-form { pointer-events: auto; }
+/* And the reverse in draw mode: saved boxes must not swallow the pointer, or
+   a new region can never be started on top of an old one. */
+.annot-layer:not(.is-disabled) .annot-box { pointer-events: none; }
+
+.annot-box {
+  position: absolute;
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 1.5px solid var(--accent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+.annot-box:hover, .annot-box.is-active {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  border-color: var(--accent-hover);
+}
+.annot-box--draft {
+  pointer-events: none;
+  border-style: dashed;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.annot-box__tag {
+  position: absolute;
+  top: -9px;
+  left: -9px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* The floating note/score form for a just-drawn region, and the read-only
+   popover for an already-saved one. Positioned in JS off the region's own
+   top-right corner (see AnnotationLayer's popoverStyle), clamped there so
+   this fixed width rarely needs to fight the frame's edge. */
+.annot-form,
+.annot-popover {
+  position: absolute;
+  z-index: 3;
+  width: 230px;
+  padding: 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  cursor: default;
+  transform: translateY(-4px);
+}
+.annot-form__body { display: grid; gap: 10px; }
+.annot-form .score-picker--compact { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+.annot-form .score-picker--compact .score-opt { padding: 7px 4px; }
+.annot-form .score-picker--compact .score-opt b { font-size: 0.75rem; }
+.annot-form__actions { display: flex; justify-content: flex-end; gap: 8px; }
+.annot-popover__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.annot-popover p { margin: 6px 0; font-size: 0.8125rem; line-height: 1.45; }
+
+/* The same saved regions, listed below the imagery -- the numbered tag
+   matches .annot-box__tag so a row here and a box on the image are
+   obviously the same annotation. */
+.annot-list { list-style: none; display: grid; gap: 12px; }
+.annot-list li { display: flex; gap: 10px; align-items: flex-start; }
+.annot-list__tag {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 800;
+}
+.annot-list p { margin: 3px 0; font-size: 0.8125rem; line-height: 1.45; }
 
 /* --- empty state --- */
 
@@ -1421,6 +2045,81 @@ dialog.lightbox[open] { animation: rise 240ms var(--ease-spring) both; }
 .spec-list > div:last-child { border-bottom: 0; }
 .spec-list dt { color: var(--text-3); font-weight: 600; }
 .spec-list dd { color: var(--text); }
+.spec-list--tight > div { grid-template-columns: 110px minmax(0, 1fr); padding: 10px 0; font-size: 0.75rem; }
+.spec-list--tight dd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A segmented filter: one row of mutually exclusive choices, each carrying
+   its own count so the choice is informed before it is made. */
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-soft);
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.seg::-webkit-scrollbar { display: none; }
+.seg__btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+.seg__btn:hover { color: var(--text); }
+.seg__btn.is-active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-xs); }
+.seg__count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 99px;
+  background: var(--line-soft);
+  color: var(--text-2);
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.seg__btn.is-active .seg__count { background: var(--accent-soft); color: var(--accent-text); }
+
+/* Recent activity, from the review log -- what the bell opens. */
+.bell-dot {
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.activity { width: 340px; padding: 6px; right: 0; left: auto; }
+.activity__head { display: grid; gap: 1px; padding: 10px 10px 8px; border-bottom: 1px solid var(--line-soft); }
+.activity__list { list-style: none; padding: 4px 0; margin: 0; }
+.activity__list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+.activity__list li:hover { background: var(--surface-sunken); }
+.activity__text { display: grid; min-width: 0; flex: 1; }
+.activity__text .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem; }
+.activity__flag { color: var(--warn); display: grid; }
+.activity__all { justify-content: center; border-top: 1px solid var(--line-soft); border-radius: 0 0 10px 10px; }
 
 .caveats { display: grid; gap: 14px; }
 .caveats > div {
@@ -1522,13 +2221,28 @@ dialog.lightbox[open] { animation: rise 240ms var(--ease-spring) both; }
   /* The menu is anchored to a chip that now sits at the screen edge; let it
      span the width instead of overflowing off-screen. */
   .menu { right: 0; left: auto; min-width: min(272px, calc(100vw - 32px)); }
+  .activity { position: fixed; top: 64px; left: 12px; right: 12px; width: auto; }
+
+  /* Stacked, the field sits above its numbers rather than beside them. */
+  .bench { grid-template-columns: minmax(0, 1fr); }
+  .bench__media { padding: 14px 14px 0; background: var(--viewer-bg); }
+  .bench__media img { max-height: 300px; width: auto; }
 }
 
 @media (max-width: 560px) {
-  .viewer__bar { padding: 11px 12px; }
+  /* The tab strip takes its own row; the tools drop to icon-only beneath it. */
+  .viewer__bar { flex-wrap: wrap; padding: 10px; }
+  .viewer__tabs { flex-basis: 100%; }
+  .viewer__tools { margin-left: auto; }
+  .tool span { display: none; }
+  .tool { width: 34px; padding: 0; justify-content: center; }
   .viewer__stage { padding: 12px; min-height: 220px; }
   .viewer__stage img, .compare img { max-height: 46vh; }
-  .key-result__value b { font-size: 2rem; }
+  .key-result__value b,
+  .bench__figure b { font-size: 2rem; }
+  .kpi .sparkline { display: none; }
+  .class-bars__row { grid-template-columns: minmax(0, 86px) minmax(0, 1fr) auto; gap: 9px; }
+  .profile-card__stats b { font-size: 1.1rem; }
   .safety-strip { font-size: 0.6875rem; padding: 10px 13px; }
   .legend span { font-size: 0.625rem; padding: 4px 9px 4px 7px; }
   .empty { padding: 40px 16px; }

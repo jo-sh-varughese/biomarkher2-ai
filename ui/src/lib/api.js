@@ -109,6 +109,34 @@ export async function submitReview(payload) {
   }
 }
 
+/* ----------------------------------------------------------- annotation --- */
+
+/** @param {{patch_id: string, x: number, y: number, w: number, h: number, note?: string, score?: string, reviewer: string}} payload */
+export async function saveAnnotation(payload) {
+  if (offline) {
+    await pause(300);
+    return { demo: true, annotation: demoAnnotation(payload) };
+  }
+  try {
+    const data = await request("/api/annotations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return { ...data, demo: false };
+  } catch (err) {
+    if (isUnreachable(err)) {
+      await pause(300);
+      return { demo: true, annotation: demoAnnotation(payload) };
+    }
+    throw err;
+  }
+}
+
+function demoAnnotation(payload) {
+  return { ...payload, id: `demo-${Date.now()}`, recorded_at: new Date().toISOString() };
+}
+
 /* -------------------------------------------------------------- report --- */
 
 /* The report endpoint returns a PDF, not JSON, so it does not go through
@@ -148,19 +176,37 @@ export async function downloadReport(requestBody) {
   return true;
 }
 
+/* ------------------------------------------------------------- reviews --- */
+
+/* The review log. Live, it is the server's own JSONL log, newest first --
+   the record of truth the Case log page says it is a view of. Only when the
+   backend is genuinely unreachable does it fall back to this browser's
+   cached sign-offs plus the seeded demo rows, and the result says so
+   (`demo: true`), so a seeded "Dr. S. Pillai" can never again sit in a live
+   case log looking like a real sign-off. */
+export async function fetchReviews() {
+  if (offline) return { demo: true, reviews: loadDemoReviews() };
+  try {
+    const data = await request("/api/reviews");
+    return { demo: false, reviews: data.reviews ?? [] };
+  } catch (err) {
+    if (isUnreachable(err)) return { demo: true, reviews: loadDemoReviews() };
+    throw err;
+  }
+}
+
 /* --------------------------------------------------------------- local --- */
 
-/* Reviews recorded this session are also kept client-side so the Cases page
-   has something to show. The server-side JSONL log remains the record of
-   truth; this is a convenience view, and says so on the page. */
+/* In demo mode there is no server log, so sign-offs made in this browser are
+   kept here instead, ahead of the seeded rows. */
 const REVIEW_KEY = "bmh2.reviews.v1";
 
-export function loadReviews() {
+function loadDemoReviews() {
   try {
     const stored = JSON.parse(localStorage.getItem(REVIEW_KEY) || "[]");
-    return [...stored, ...DEMO_REVIEWS];
+    return [...stored, ...DEMO_REVIEWS.map((r) => ({ ...r, demo: true }))];
   } catch {
-    return [...DEMO_REVIEWS];
+    return DEMO_REVIEWS.map((r) => ({ ...r, demo: true }));
   }
 }
 

@@ -20,6 +20,23 @@
   function = "gate"
   path = "/*"
 
+# Files that are not in the build must 404, not fall through to the page
+# below: the catch-all would otherwise hand the browser index.html for a
+# missing /fonts/*.woff2 (then decoded as a font -- "OTS parsing error") or
+# for a stale hashed /assets/*.js requested by a tab opened before the last
+# deploy ("expected a JavaScript module, got text/html"). These are
+# non-forced, so a file that does exist (fonts dropped into public/fonts/)
+# is still served.
+[[redirects]]
+  from = "/fonts/*"
+  to = "/index.html"
+  status = 404
+
+[[redirects]]
+  from = "/assets/*"
+  to = "/index.html"
+  status = 404
+
 # The portal uses real URLs (/analysis, /cases, /model, /method). Without this
 # rule a hard refresh or a shared link to any of them would 404, because no
 # such file exists on disk -- the router resolves them in the browser.

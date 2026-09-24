@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import Icon from "./Icon.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
+import { runName } from "../lib/format.js";
 import { useT } from "../i18n/I18nContext.jsx";
 
 const NAV = [
@@ -99,7 +100,7 @@ export default function Sidebar({ open, collapsed, onClose }) {
               </div>
               <div className="rail-status__row">
                 <dt>{t("common.run")}</dt>
-                <dd title={provenance?.run}>{provenance?.run ?? "—"}</dd>
+                <dd title={provenance?.run}>{provenance?.run ? runName(provenance.run) : "—"}</dd>
               </div>
               <div className="rail-status__row">
                 <dt>{t("common.archShort")}</dt>

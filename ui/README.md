@@ -213,10 +213,14 @@ src/
     Sidebar.jsx         nav, live checkpoint status
     Topbar.jsx          search, theme toggle, account menu
     Icon.jsx            the whole icon set, no icon package
-    charts/Charts.jsx   donut, stacked bar, compare bars, columns, sparkline
+    Badges.jsx          score + concordance badges shared by tables/popovers
+    AnnotationLayer.jsx drag-to-mark regions on the field image, see below
+    charts/Charts.jsx   donut, stacked bar, compare/class bars, columns,
+                        sparkline, heat-scale colour bar
   pages/
     Login.jsx           hardcoded demo sign-in
-    Dashboard.jsx       KPIs, current field, throughput, recent sign-offs
+    Dashboard.jsx       KPIs, current field, throughput, recent sign-offs --
+                        every figure computed from the review log
     Analysis.jsx        the working screen (see below)
     Cases.jsx           sign-off history, filter + search
     ModelCard.jsx       specification, limitations, AIM-HER2 comparison
@@ -229,6 +233,78 @@ src/
   styles/               tokens -> base -> app
 legacy/                 the original index.html, app.js, styles.css
 ```
+
+## The Key Result answers "how much of THIS class, and where"
+
+The headline used to be the model's largest-area class -- on a mostly
+negative field (real IHC usually is, even on a slide that scores 2+ or 3+)
+that number is rarely the one anyone cares about. It now leads with the
+FACT the dataset itself carries: `dataset_label` on `/api/analyze`'s
+response (`app/server.py`'s `State.dataset_label`, looked up from the same
+folder the sample list was built from) is this field's own "0"/"1+"/"2+"/
+"3+" label, when the field came from the training data. The class picker
+defaults to it, the headline percentage is `model_percentages` for exactly
+that class, and the "Where" tab (backed by `isolate` on the same response,
+see `isolate_overlays` in `app/analysis.py`) paints only that class's
+pixels so a genuinely small hot region is still easy to find in an
+otherwise busy field. An upload carries no dataset label, so the picker
+falls back to the model's own largest class there instead. The four classes
+remain fully browsable -- the picker is not a filter on what the model
+measured, only on what is in focus right now.
+
+## The viewer: legible imagery
+
+The viewer is a dark instrument in both themes -- the dark surround
+pathology and radiology viewers use to keep a stained field's contrast
+readable. Its tokens are re-scoped on `.viewer`, so everything inside it
+(tabs, tools, caption, annotation popovers) follows without per-element
+overrides.
+
+Every warm overlay is painted over a **greyscale** copy of the field, never
+over the stain itself: the class colours, the heat ramp and DAB brown are
+all the same hue family, and on the brown field the 2+/3+ fills vanished into
+the staining they measure. "Original" stays in full colour for reading the
+stain. "Where" goes further -- the field is washed out and only the class in
+focus is painted, so a 2% hot region is still findable at a glance.
+
+**DAB heatmap** shows the same optical-density signal as the intensity map,
+unbucketed, on a semantic heat ramp (pale -> amber -> red -> crimson) whose
+stops sit at 0 and the weak / moderate / strong thresholds. The server
+serves that scale as `heatmap_legend` in `/api/context`, and the colour bar
+under the heatmap (and on the model card) is drawn from it, so the bar and
+the pixels cannot drift.
+
+The class palette's 1+ step is `#eaa237`: the previous `#ffd699` measured
+1.37:1 on a white card, below the 2:1 an ordered ramp's light end needs, and
+1+ is the step that separates HER2-0 from HER2-low.
+
+## Region annotations
+
+**Annotate** (the pen, top right of the viewer) turns on draw mode: drag a
+box on the field and attach a note and/or a score to just that region --
+narrower than the whole-field sign-off at the bottom of the rail. Esc or
+**Done** leaves the mode. Draw mode is deliberately a mode: always-on, the
+layer made a swipe on the image unable to scroll a phone's page and a click
+unable to open the enlarged view. Outside the mode, saved boxes stay
+clickable; inside it, they don't intercept the pointer, so a new region can
+start on top of an old one.
+
+Coordinates are stored as fractions of the image (0-1) measured off the
+`<img>` element's own rendered box, so a saved box still lines up after a
+resize or after switching panels. Saved through `POST /api/annotations` to
+`artifacts/annotations.jsonl` (append-only, like the review log) and returned
+with every `/api/analyze` call for that field. Offline/demo mode still works
+-- an annotation is kept for the current session only, and says so.
+
+## Where the numbers come from
+
+Live, the Case log, the overview's KPIs, throughput chart and assessment mix,
+and the activity panel behind the bell are all read from the server's review
+log via `GET /api/reviews` -- nothing on those screens is a hardcoded figure.
+The seeded demo history is used only when the backend is unreachable, and is
+labelled "Demo history" wherever it appears. Scores are compared through
+`isCannotAssess()` (`src/lib/format.js`), because the server offers "cannot
+assess from this field" where older demo data said "Cannot assess".
 
 ## Two decisions worth knowing about
 

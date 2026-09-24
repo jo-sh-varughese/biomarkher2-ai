@@ -182,7 +182,9 @@ export default function Login() {
             <span>{t("login.statClasses")}</span>
           </div>
           <div>
-            <strong>&lt;2s</strong>
+            {/* Measured, not aspirational: median of 48 full analyses of
+                1024x1024 fields on the development laptop's CPU (2026-09-24). */}
+            <strong>≈7s</strong>
             <span>{t("login.statSpeed")}</span>
           </div>
           <div>

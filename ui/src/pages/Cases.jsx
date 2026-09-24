@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import Icon from "../components/Icon.jsx";
+import { ConcordBadge, ScoreBadge } from "../components/Badges.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
-import { dateTime, initials, pct } from "../lib/format.js";
+import { dateTime, initials, isCannotAssess, pct, shortId } from "../lib/format.js";
 import { useI18n } from "../i18n/I18nContext.jsx";
 
 /* A seeded demo row carries a string key; a row the pathologist actually
@@ -17,18 +18,29 @@ const FILTERS = [
 ];
 
 export default function Cases() {
-  const { reviews } = usePortal();
+  const { reviews, reviewsDemo, context } = usePortal();
   const { t, locale } = useI18n();
   const [params, setParams] = useSearchParams();
   const [filter, setFilter] = useState("all");
   const query = params.get("q") ?? "";
+  const classes = context?.classes ?? [];
+
+  const counts = useMemo(
+    () => ({
+      all: reviews.length,
+      flagged: reviews.filter((r) => !r.agrees).length,
+      concordant: reviews.filter((r) => r.agrees).length,
+      unassessable: reviews.filter((r) => isCannotAssess(r.score)).length,
+    }),
+    [reviews],
+  );
 
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return reviews.filter((r) => {
       if (filter === "flagged" && r.agrees) return false;
       if (filter === "concordant" && !r.agrees) return false;
-      if (filter === "unassessable" && r.score !== "Cannot assess") return false;
+      if (filter === "unassessable" && !isCannotAssess(r.score)) return false;
       if (!needle) return true;
       return [r.patch_id, r.reviewer, noteOf(r, t), r.score]
         .filter(Boolean)
@@ -55,20 +67,26 @@ export default function Cases() {
 
       <section className="card card--pad">
         <div className="card-head" style={{ flexWrap: "wrap" }}>
-          <div className="viewer__tabs" role="tablist" aria-label={t("cases.filterLabel")}>
+          <div className="seg" role="tablist" aria-label={t("cases.filterLabel")}>
             {FILTERS.map((f) => (
               <button
                 key={f.id}
                 type="button"
                 role="tab"
                 aria-selected={filter === f.id}
-                className={`viewer__tab${filter === f.id ? " is-active" : ""}`}
+                className={`seg__btn${filter === f.id ? " is-active" : ""}`}
                 onClick={() => setFilter(f.id)}
               >
                 {t(f.key)}
+                <span className="seg__count">{counts[f.id]}</span>
               </button>
             ))}
           </div>
+          {reviewsDemo ? (
+            <span className="badge badge--warn">
+              <span className="dot" /> {t("cases.demoRows")}
+            </span>
+          ) : null}
 
           <div className="searchbox searchbox--inline">
             <Icon name="search" size={16} />
@@ -106,30 +124,24 @@ export default function Cases() {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} className={r.agrees ? undefined : "is-flagged"}>
-                    <td className="mono" data-label={t("table.field")}>{r.patch_id}</td>
+                    <td className="mono cell-id" data-label={t("table.field")} title={r.patch_id}>
+                      {shortId(r.patch_id)}
+                    </td>
                     <td data-label={t("table.assessment")}>
-                      <span className="badge badge--accent">{r.score}</span>
+                      <ScoreBadge score={r.score} classes={classes} t={t} />
                     </td>
                     <td className="muted" data-label={t("table.datasetLabel")}>{r.dataset_label ?? "—"}</td>
                     <td className="num" data-label={t("table.tissue")}>
                       {r.tissue_percent != null ? pct(r.tissue_percent) : "—"}
                     </td>
                     <td data-label={t("table.reviewer")}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <span className="who">
                         <span className="avatar avatar--sm">{initials(r.reviewer)}</span>
-                        {r.reviewer}
+                        <span className="who__name">{r.reviewer}</span>
                       </span>
                     </td>
                     <td data-label={t("table.concordant")}>
-                      {r.agrees ? (
-                        <span className="badge badge--ok">
-                          <Icon name="check" size={11} /> {t("common.yes")}
-                        </span>
-                      ) : (
-                        <span className="badge badge--warn">
-                          <Icon name="alert" size={11} /> {t("table.flagged")}
-                        </span>
-                      )}
+                      <ConcordBadge agrees={r.agrees} t={t} />
                     </td>
                     <td className="muted" style={{ maxWidth: 260 }} data-label={t("table.notes")} data-block="">
                       {noteOf(r, t) || <span style={{ opacity: 0.45 }}>—</span>}

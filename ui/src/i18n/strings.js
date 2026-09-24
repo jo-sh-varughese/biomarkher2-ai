@@ -79,6 +79,10 @@ export const STRINGS = {
       search: "Search patches, reviewers, case notes",
       searchLabel: "Search",
       notifications: "Notifications",
+      activity: "Recent activity",
+      activitySub: "Latest sign-offs from the review log",
+      activityEmpty: "No sign-offs recorded yet.",
+      activityAll: "Open the case log",
       toLight: "Switch to light theme",
       toDark: "Switch to dark theme",
       profile: "Profile",
@@ -116,7 +120,7 @@ export const STRINGS = {
       posterBody:
         "Per-pixel intensity mapping over detected tissue, side by side with the classical optical-density baseline it was trained to imitate — so every disagreement between the two is visible rather than hidden inside a single number.",
       statClasses: "Intensity classes mapped",
-      statSpeed: "Per field, on CPU",
+      statSpeed: "Per 1024² field, laptop CPU",
       statReviewed: "Reviewed by a pathologist",
     },
 
@@ -307,8 +311,17 @@ export const STRINGS = {
         "{n} fields reviewed on this workstation. Concordance between the measurements and your reading is running at {pct}.",
       ledeOne:
         "{n} field reviewed on this workstation. Concordance between the measurements and your reading is running at {pct}.",
+      ledeNone:
+        "Nothing reviewed on this workstation yet. Analyse a field and record your assessment to start the log.",
       kpiReviewed: "Fields reviewed",
       kpiReviewedFoot: "in the last 7 days",
+      kpiDelta: "vs. prior 7 days · {n} this week",
+      throughputTotal: "{n} in 14 days",
+      throughputEmpty: "No sign-offs in the last 14 days.",
+      yours: "Yours",
+      team: "All reviewers",
+      thisWeek: "This week",
+      recentSubDemo: "Demo history — the backend is not running",
       kpiConcordant: "Measurements concordant",
       kpiConcordantFoot: "{a} of {b} sign-offs agreed with the maps",
       kpiFlagged: "Flagged for disagreement",
@@ -329,7 +342,7 @@ export const STRINGS = {
       throughput: "Review throughput",
       throughputSub: "Fields signed off per day, last 14 days",
       recent: "Recent sign-offs",
-      recentSub: "Your assessments, most recent first",
+      recentSub: "From the server's review log, newest first",
       viewAll: "View all",
       noneRecorded: "No assessments recorded yet.",
       signOffs: "Sign-offs",
@@ -387,11 +400,17 @@ export const STRINGS = {
       keyResult: "Key result",
       measurement: "Measurement",
       largestClass: "Largest stained-area class",
+      sourceLabel: "This field's dataset label is {label}",
+      pickClassLabel: "No dataset label for this field — pick a class to inspect",
+      classPickerLabel: "Intensity class to inspect",
       ofTissue: "{pct} of detected tissue",
+      seeWhere: "See where this class is",
       notAScoreLead: "This is",
       notAScoreBold: "not",
       notAScoreRest:
-        "a HER2 score. It is the intensity class covering the most tissue area in this one field. Scoring the case remains yours.",
+        " a HER2 score. It is how much of this field's tissue area falls into the selected intensity class. Scoring the case remains yours.",
+      heatLegend: "DAB optical density",
+      heatLow: "unstained",
       tissueCoverage: "Tissue coverage",
       tissueCoverageNote:
         "Tissue fills {pct} of this {w}×{h} field. Every percentage above is a share of that area — not a share of tumour cells.",
@@ -440,6 +459,12 @@ export const STRINGS = {
         tissueNote:
           "Everything outside this mask is excluded from the percentages in the rail.",
         model: "Intensity map",
+        isolate: "Where: {label}",
+        isolateNote:
+          "Only the selected intensity class is painted; every other class and all background is shown as scanned — so a class that is a small share of a busy field is still easy to find.",
+        heatmap: "DAB heatmap",
+        heatmapNote:
+          "The same DAB signal as the intensity map, without being bucketed into the four classes — a borderline pixel reads as a colour between two classes instead of being forced into one of them.",
         baseline: "Threshold baseline",
         baselineNote:
           "Classical DAB optical-density thresholds — the rule the model was trained to imitate.",
@@ -447,11 +472,36 @@ export const STRINGS = {
         ambiguityNote:
           "Where the model's calibrated prediction set narrows to a single class (confident) versus more than one (ambiguous). A confidence map, not a class map.",
       },
+      tabs: {
+        original: "Original",
+        tissue: "Tissue",
+        model: "Intensity",
+        isolate: "Where {label}",
+        heatmap: "Heatmap",
+        baseline: "Baseline",
+        ambiguity: "Confidence",
+      },
+      annotate: {
+        title: "Field annotations",
+        listSub: "Regions marked on the image above, in the order they were saved",
+        hint: "Drag on the image to mark a region",
+        toggle: "Annotate",
+        done: "Done",
+        toggleTitle: "Mark regions on the field — Esc to stop",
+        notePlaceholder: "What did you notice here?",
+        cancel: "Cancel",
+        save: "Save annotation",
+        savedTitle: "Annotation saved",
+        savedLive: "Written to the server-side log.",
+        savedDemo: "Kept for this session only — the backend is not running.",
+        failedTitle: "Could not save the annotation",
+      },
     },
 
     cases: {
       eyebrow: "Sign-off history",
       title: "Case log",
+      demoRows: "Demo history",
       lede:
         "Every assessment recorded from this workstation. The server-side JSONL log written by {path} remains the record of truth; this is a convenience view of it.",
       all: "All",
@@ -490,7 +540,7 @@ export const STRINGS = {
       classesSub: "Palette supplied by the server",
       classIndex: "index {i} · {color}",
       classesNote:
-        "The legend, the heatmap and the results table all read this same palette, so they can never drift apart.",
+        "The legend, the intensity map and the results table all read this palette, so they can never drift apart. The DAB heatmap uses its own heat scale, anchored at the same three thresholds:",
       specs: {
         intendedUse: "Intended use",
         intendedUseBody:
@@ -701,6 +751,10 @@ export const STRINGS = {
       preferences: "ക്രമീകരണങ്ങൾ",
       signOut: "സൈൻ ഔട്ട്",
       registration: "രജി. {id}",
+      activity: "സമീപകാല പ്രവർത്തനം",
+      activitySub: "റിവ്യൂ ലോഗിലെ ഏറ്റവും പുതിയ ഒപ്പുവയ്ക്കലുകൾ",
+      activityEmpty: "ഇതുവരെ ഒപ്പുവയ്ക്കലുകളൊന്നും രേഖപ്പെടുത്തിയിട്ടില്ല.",
+      activityAll: "കേസ് ലോഗ് തുറക്കുക",
     },
 
     safety: {
@@ -733,7 +787,7 @@ export const STRINGS = {
       posterBody:
         "കണ്ടെത്തിയ ടിഷ്യുവിന് മേൽ പിക്സൽ തലത്തിലുള്ള തീവ്രതാ മാപ്പിങ്, അതിനൊപ്പം മോഡൽ അനുകരിക്കാൻ പഠിച്ച പരമ്പരാഗത ഒപ്റ്റിക്കൽ-ഡെൻസിറ്റി ബേസ്‌ലൈനും — അങ്ങനെ ഇവ രണ്ടും തമ്മിലുള്ള ഓരോ വ്യത്യാസവും ഒറ്റ സംഖ്യയ്ക്കുള്ളിൽ മറയാതെ കാണാം.",
       statClasses: "മാപ്പ് ചെയ്ത തീവ്രതാ വിഭാഗങ്ങൾ",
-      statSpeed: "ഓരോ ഫീൽഡിനും, CPU-യിൽ",
+      statSpeed: "ഓരോ 1024² ഫീൽഡിനും, ലാപ്‌ടോപ്പ് CPU-യിൽ",
       statReviewed: "പാത്തോളജിസ്റ്റ് പരിശോധിക്കുന്നു",
     },
 
@@ -924,8 +978,17 @@ export const STRINGS = {
         "ഈ വർക്ക്‌സ്റ്റേഷനിൽ {n} ഫീൽഡുകൾ പരിശോധിച്ചു. അളവുകളും താങ്കളുടെ വിലയിരുത്തലും തമ്മിലുള്ള പൊരുത്തം {pct} ആണ്.",
       ledeOne:
         "ഈ വർക്ക്‌സ്റ്റേഷനിൽ {n} ഫീൽഡ് പരിശോധിച്ചു. അളവുകളും താങ്കളുടെ വിലയിരുത്തലും തമ്മിലുള്ള പൊരുത്തം {pct} ആണ്.",
+      ledeNone:
+        "ഈ വർക്ക്‌സ്റ്റേഷനിൽ ഇതുവരെ ഒന്നും പരിശോധിച്ചിട്ടില്ല. ലോഗ് തുടങ്ങാൻ ഒരു ഫീൽഡ് വിശകലനം ചെയ്ത് താങ്കളുടെ വിലയിരുത്തൽ രേഖപ്പെടുത്തുക.",
       kpiReviewed: "പരിശോധിച്ച ഫീൽഡുകൾ",
       kpiReviewedFoot: "കഴിഞ്ഞ 7 ദിവസത്തിൽ",
+      kpiDelta: "മുൻ 7 ദിവസത്തെ അപേക്ഷിച്ച് · ഈ ആഴ്ച {n}",
+      throughputTotal: "14 ദിവസത്തിൽ {n}",
+      throughputEmpty: "കഴിഞ്ഞ 14 ദിവസത്തിൽ ഒപ്പുവയ്ക്കലുകളൊന്നുമില്ല.",
+      yours: "താങ്കളുടേത്",
+      team: "എല്ലാ പരിശോധകരും",
+      thisWeek: "ഈ ആഴ്ച",
+      recentSubDemo: "ഡെമോ ചരിത്രം — ബാക്കെൻഡ് പ്രവർത്തിക്കുന്നില്ല",
       kpiConcordant: "അളവുകൾ പൊരുത്തപ്പെട്ടത്",
       kpiConcordantFoot: "{b} ഒപ്പുവയ്ക്കലുകളിൽ {a} എണ്ണം മാപ്പുകളോട് യോജിച്ചു",
       kpiFlagged: "വ്യത്യാസം രേഖപ്പെടുത്തിയവ",
@@ -947,7 +1010,7 @@ export const STRINGS = {
       throughput: "പരിശോധനയുടെ തോത്",
       throughputSub: "കഴിഞ്ഞ 14 ദിവസത്തിൽ ദിവസേന ഒപ്പുവച്ച ഫീൽഡുകൾ",
       recent: "സമീപകാല ഒപ്പുവയ്ക്കലുകൾ",
-      recentSub: "താങ്കളുടെ വിലയിരുത്തലുകൾ, ഏറ്റവും പുതിയത് ആദ്യം",
+      recentSub: "സെർവറിന്റെ റിവ്യൂ ലോഗിൽ നിന്ന്, ഏറ്റവും പുതിയത് ആദ്യം",
       viewAll: "എല്ലാം കാണുക",
       noneRecorded: "ഇതുവരെ വിലയിരുത്തലുകളൊന്നും രേഖപ്പെടുത്തിയിട്ടില്ല.",
       signOffs: "ഒപ്പുവയ്ക്കലുകൾ",
@@ -1005,11 +1068,17 @@ export const STRINGS = {
       keyResult: "പ്രധാന ഫലം",
       measurement: "അളവ്",
       largestClass: "ഏറ്റവും കൂടുതൽ വിസ്തീർണമുള്ള തീവ്രതാ വിഭാഗം",
+      sourceLabel: "ഈ ഫീൽഡിന്റെ ഡാറ്റാസെറ്റ് ലേബൽ {label} ആണ്",
+      pickClassLabel: "ഈ ഫീൽഡിന് ഡാറ്റാസെറ്റ് ലേബൽ ഇല്ല — പരിശോധിക്കാൻ ഒരു വിഭാഗം തിരഞ്ഞെടുക്കുക",
+      classPickerLabel: "പരിശോധിക്കാനുള്ള തീവ്രതാ വിഭാഗം",
       ofTissue: "കണ്ടെത്തിയ ടിഷ്യുവിന്റെ {pct}",
+      seeWhere: "ഈ വിഭാഗം എവിടെയാണെന്ന് കാണുക",
       notAScoreLead: "ഇത് ഒരു HER2 സ്കോർ",
       notAScoreBold: "അല്ല",
       notAScoreRest:
-        ". ഈ ഒരൊറ്റ ഫീൽഡിൽ ഏറ്റവും കൂടുതൽ ടിഷ്യു വിസ്തീർണം ഉൾക്കൊള്ളുന്ന തീവ്രതാ വിഭാഗം മാത്രമാണിത്. കേസ് സ്കോർ ചെയ്യേണ്ടത് താങ്കൾ തന്നെയാണ്.",
+        ". തിരഞ്ഞെടുത്ത തീവ്രതാ വിഭാഗത്തിൽ ഈ ഫീൽഡിന്റെ എത്ര ടിഷ്യു വിസ്തീർണം ഉൾപ്പെടുന്നു എന്നാണിത്. കേസ് സ്കോർ ചെയ്യേണ്ടത് താങ്കൾ തന്നെയാണ്.",
+      heatLegend: "DAB ഒപ്റ്റിക്കൽ ഡെൻസിറ്റി",
+      heatLow: "സ്റ്റെയിൻ ഇല്ല",
       tissueCoverage: "ടിഷ്യുവിന്റെ വ്യാപ്തി",
       tissueCoverageNote:
         "ഈ {w}×{h} ഫീൽഡിന്റെ {pct} ടിഷ്യുവാണ്. മുകളിലുള്ള ഓരോ ശതമാനവും ആ വിസ്തീർണത്തിന്റെ പങ്കാണ് — ട്യൂമർ കോശങ്ങളുടെ പങ്കല്ല.",
@@ -1058,6 +1127,12 @@ export const STRINGS = {
         tissueNote:
           "ഈ മാസ്കിനു പുറത്തുള്ളതെല്ലാം വശത്തെ ശതമാനക്കണക്കുകളിൽ നിന്ന് ഒഴിവാക്കിയിരിക്കുന്നു.",
         model: "തീവ്രതാ മാപ്പ്",
+        isolate: "എവിടെ: {label}",
+        isolateNote:
+          "തിരഞ്ഞെടുത്ത തീവ്രതാ വിഭാഗം മാത്രം നിറം നൽകിയിരിക്കുന്നു; മറ്റെല്ലാ വിഭാഗങ്ങളും പശ്ചാത്തലവും സ്കാൻ ചെയ്തതുപോലെ കാണിക്കുന്നു — തിരക്കേറിയ ഒരു ഫീൽഡിൽ ചെറിയ പങ്കുള്ള ഒരു വിഭാഗം പോലും എളുപ്പത്തിൽ കണ്ടെത്താൻ.",
+        heatmap: "DAB ഹീറ്റ്മാപ്പ്",
+        heatmapNote:
+          "തീവ്രതാ മാപ്പിലെ അതേ DAB സിഗ്നൽ, നാലു വിഭാഗങ്ങളിലേക്ക് വേർതിരിക്കാതെ — അതിർത്തിയിലുള്ള ഒരു പിക്സൽ ഒരു വിഭാഗത്തിലേക്ക് നിർബന്ധിക്കപ്പെടുന്നതിനു പകരം രണ്ട് വിഭാഗങ്ങൾക്കിടയിലുള്ള ഒരു നിറമായി കാണപ്പെടുന്നു.",
         baseline: "ത്രെഷോൾഡ് ബേസ്‌ലൈൻ",
         baselineNote:
           "പരമ്പരാഗത DAB ഒപ്റ്റിക്കൽ-ഡെൻസിറ്റി ത്രെഷോൾഡുകൾ — മോഡൽ അനുകരിക്കാൻ പരിശീലിപ്പിക്കപ്പെട്ട നിയമം.",
@@ -1065,11 +1140,36 @@ export const STRINGS = {
         ambiguityNote:
           "മോഡലിന്റെ കാലിബ്രേറ്റ് ചെയ്ത പ്രവചനഗണം ഒറ്റ വിഭാഗത്തിലേക്ക് ചുരുങ്ങുന്നിടം (ഉറപ്പ്) ഒന്നിലധികം വിഭാഗങ്ങൾ ഉള്ളിടം (അവ്യക്തം) എന്നിവ. ഇത് വിശ്വാസ്യതാ മാപ്പാണ്, വിഭാഗ മാപ്പല്ല.",
       },
+      tabs: {
+        original: "അസ്സൽ",
+        tissue: "ടിഷ്യു",
+        model: "തീവ്രത",
+        isolate: "എവിടെ {label}",
+        heatmap: "ഹീറ്റ്മാപ്പ്",
+        baseline: "ബേസ്‌ലൈൻ",
+        ambiguity: "വിശ്വാസ്യത",
+      },
+      annotate: {
+        title: "ഫീൽഡ് അടയാളക്കുറിപ്പുകൾ",
+        listSub: "മുകളിലെ ചിത്രത്തിൽ അടയാളപ്പെടുത്തിയ ഭാഗങ്ങൾ, സംരക്ഷിച്ച ക്രമത്തിൽ",
+        hint: "ഒരു ഭാഗം അടയാളപ്പെടുത്താൻ ചിത്രത്തിൽ വലിക്കുക",
+        toggle: "അടയാളപ്പെടുത്തുക",
+        done: "കഴിഞ്ഞു",
+        toggleTitle: "ഫീൽഡിൽ ഭാഗങ്ങൾ അടയാളപ്പെടുത്തുക — നിർത്താൻ Esc",
+        notePlaceholder: "ഇവിടെ എന്താണ് ശ്രദ്ധയിൽപ്പെട്ടത്?",
+        cancel: "റദ്ദാക്കുക",
+        save: "അടയാളക്കുറിപ്പ് സംരക്ഷിക്കുക",
+        savedTitle: "അടയാളക്കുറിപ്പ് സംരക്ഷിച്ചു",
+        savedLive: "സെർവർ-സൈഡ് ലോഗിൽ എഴുതി.",
+        savedDemo: "ഈ സെഷനിൽ മാത്രം സൂക്ഷിച്ചു — ബാക്കെൻഡ് പ്രവർത്തിക്കുന്നില്ല.",
+        failedTitle: "അടയാളക്കുറിപ്പ് സംരക്ഷിക്കാനായില്ല",
+      },
     },
 
     cases: {
       eyebrow: "ഒപ്പുവയ്ക്കലുകളുടെ ചരിത്രം",
       title: "കേസ് രേഖ",
+      demoRows: "ഡെമോ ചരിത്രം",
       lede:
         "ഈ വർക്ക്‌സ്റ്റേഷനിൽ നിന്ന് രേഖപ്പെടുത്തിയ എല്ലാ വിലയിരുത്തലുകളും. {path} എഴുതുന്ന സെർവറിലെ JSONL രേഖയാണ് ആധികാരിക രേഖ; ഇത് അതിന്റെ സൗകര്യപ്രദമായ കാഴ്ചയാണ്.",
       all: "എല്ലാം",
@@ -1109,7 +1209,7 @@ export const STRINGS = {
       classesSub: "സെർവർ നൽകുന്ന വർണനിര",
       classIndex: "സൂചിക {i} · {color}",
       classesNote:
-        "ലെജൻഡും ഹീറ്റ്‌മാപ്പും ഫലപ്പട്ടികയും ഇതേ വർണനിര തന്നെയാണ് വായിക്കുന്നത്, അതിനാൽ അവ തമ്മിൽ ഒരിക്കലും വ്യത്യാസം വരില്ല.",
+        "ലെജൻഡും തീവ്രതാ മാപ്പും ഫലപ്പട്ടികയും ഇതേ വർണനിര തന്നെയാണ് വായിക്കുന്നത്, അതിനാൽ അവ തമ്മിൽ ഒരിക്കലും വ്യത്യാസം വരില്ല. DAB ഹീറ്റ്മാപ്പിന് സ്വന്തം ഹീറ്റ് സ്കെയിൽ ഉണ്ട്, അതേ മൂന്ന് ത്രെഷോൾഡുകളിൽ ഉറപ്പിച്ചത്:",
       specs: {
         intendedUse: "ഉദ്ദേശിച്ച ഉപയോഗം",
         intendedUseBody:
