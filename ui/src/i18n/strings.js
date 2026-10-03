@@ -28,6 +28,10 @@
    a viva -- a mistranslation there is the one that would actually matter.
    ==========================================================================*/
 
+import { PRESCORE_STRINGS } from "./strings.prescore.js";
+import { REVIEW_STRINGS } from "./strings.review.js";
+import { AUTH_STRINGS } from "./strings.auth.js";
+
 export const STRINGS = {
   /* ------------------------------------------------------------ English --- */
   en: {
@@ -41,6 +45,8 @@ export const STRINGS = {
       epochShort: "ep. {n}",
       architecture: "Architecture",
       archShort: "Arch",
+      prescoreModel: "Pre-score",
+      stainModel: "Stain map",
       language: "Language",
       close: "Close",
       cancel: "Cancel",
@@ -63,6 +69,7 @@ export const STRINGS = {
     nav: {
       overview: "Overview",
       analysis: "Field analysis",
+      slides: "Whole slides",
       cases: "Case log",
       model: "Model card",
       method: "Method & caveats",
@@ -92,9 +99,9 @@ export const STRINGS = {
     },
 
     safety: {
-      lead: "This tool does not assign a HER2 score.",
+      lead: "This tool does not make the HER2 diagnosis.",
       body:
-        "It measures stained tissue area and shows where the staining is. Every figure here needs a pathologist's confirmation.",
+        "It measures membrane staining cell by cell and, only at a validated site, suggests a pre-score with the evidence behind it. The pathologist confirms every score and decides on ISH.",
     },
 
     login: {
@@ -383,8 +390,7 @@ export const STRINGS = {
     analysis: {
       steps: "Step 1 · Choose a field  ·  Step 2 · Review",
       title: "Field analysis",
-      lede:
-        "Run one IHC field through the model and the threshold baseline together, then record your own assessment against what you can see.",
+      lede: "Run one IHC field: the AI pre-score and the cell-by-cell evidence lead, the stain maps support them. Then open the pathologist review to record your assessment.",
       pdfReport: "PDF report",
       analyse: "Analyse field",
       source: "Field source",
@@ -397,7 +403,13 @@ export const STRINGS = {
       dropTitle: "Drop an IHC field, or browse",
       dropSub: "PNG, JPEG or TIFF · kept on this machine, nothing is uploaded",
       clearUpload: "Clear upload",
-      keyResult: "Key result",
+      keyResult: "Stained area by intensity",
+      current: "Field on screen",
+      another: "Analyse another field",
+      newAnalysis: "New analysis",
+      unclassified: "not classified by the model",
+      unclassifiedNote: "The model left {pct} of the detected tissue unclassified (it labelled those pixels background). They are shown as their own row, so both columns are shares of the same tissue.",
+      intensityNames: { 0: "Negative", "1+": "Weak", "2+": "Moderate", "3+": "Strong" },
       measurement: "Measurement",
       largestClass: "Largest stained-area class",
       sourceLabel: "This field's dataset label is {label}",
@@ -471,6 +483,15 @@ export const STRINGS = {
         ambiguity: "Confidence",
         ambiguityNote:
           "Where the model's calibrated prediction set narrows to a single class (confident) versus more than one (ambiguous). A confidence map, not a class map.",
+        cells: "Cell membrane map",
+        cellsNote:
+          "Each detected cell's membrane, coloured by its ASCO/CAP category: grey 0, yellow 1+, orange 2+, red 3+. The cell table below counts them.",
+        evidence: "AI evidence",
+        evidenceNote:
+          "Where the model found the evidence for its pre-score (Grad-CAM). Red is the strongest evidence; check that it sits on tumour membranes, not on artefact.",
+        regions: "Regional pre-scores",
+        regionsNote:
+          "Each region tinted by its own pre-score; a thicker border means it weighed more in the overall pre-score. Mixed colours mean heterogeneous staining.",
       },
       tabs: {
         original: "Original",
@@ -480,6 +501,9 @@ export const STRINGS = {
         heatmap: "Heatmap",
         baseline: "Baseline",
         ambiguity: "Confidence",
+        cells: "Cells",
+        evidence: "AI evidence",
+        regions: "Regions",
       },
       annotate: {
         title: "Field annotations",
@@ -499,6 +523,7 @@ export const STRINGS = {
     },
 
     cases: {
+      statusCol: "Status",
       eyebrow: "Sign-off history",
       title: "Case log",
       demoRows: "Demo history",
@@ -707,6 +732,8 @@ export const STRINGS = {
       epochShort: "എപ്പോക്ക് {n}",
       architecture: "ആർക്കിടെക്ചർ",
       archShort: "ആർക്ക്",
+      prescoreModel: "പ്രീ-സ്കോർ",
+      stainModel: "സ്റ്റെയിൻ മാപ്പ്",
       language: "ഭാഷ",
       close: "അടയ്ക്കുക",
       cancel: "റദ്ദാക്കുക",
@@ -758,9 +785,9 @@ export const STRINGS = {
     },
 
     safety: {
-      lead: "ഈ ഉപകരണം HER2 സ്കോർ നിർണയിക്കുന്നില്ല.",
+      lead: "ഈ ഉപകരണം HER2 രോഗനിർണയം നടത്തുന്നില്ല.",
       body:
-        "ഇത് സ്റ്റെയിൻ ചെയ്ത ടിഷ്യുവിന്റെ വിസ്തീർണം അളക്കുകയും സ്റ്റെയിനിങ് എവിടെയാണെന്ന് കാണിക്കുകയും മാത്രമാണ് ചെയ്യുന്നത്. ഇവിടെയുള്ള ഓരോ കണക്കിനും ഒരു പാത്തോളജിസ്റ്റിന്റെ സ്ഥിരീകരണം ആവശ്യമാണ്.",
+        "ഇത് ഓരോ കോശത്തിന്റെയും മെംബ്രെയ്ൻ സ്റ്റെയിനിങ് അളക്കുന്നു; സാധൂകരിച്ച സ്ഥാപനത്തിൽ മാത്രം, തെളിവുകൾക്കൊപ്പം ഒരു പ്രീ-സ്കോർ നിർദ്ദേശിക്കുന്നു. ഓരോ സ്കോറും ഉറപ്പിക്കുന്നതും ISH തീരുമാനിക്കുന്നതും പാത്തോളജിസ്റ്റാണ്.",
     },
 
     login: {
@@ -1065,7 +1092,12 @@ export const STRINGS = {
       dropTitle: "ഒരു IHC ഫീൽഡ് ഇവിടെ ഇടുക, അല്ലെങ്കിൽ തിരഞ്ഞെടുക്കുക",
       dropSub: "PNG, JPEG അല്ലെങ്കിൽ TIFF · ഈ കമ്പ്യൂട്ടറിൽ തന്നെ സൂക്ഷിക്കുന്നു, ഒന്നും അപ്‌ലോഡ് ചെയ്യുന്നില്ല",
       clearUpload: "അപ്‌ലോഡ് മായ്ക്കുക",
-      keyResult: "പ്രധാന ഫലം",
+      keyResult: "തീവ്രത അനുസരിച്ച് സ്റ്റെയിൻ ചെയ്ത വിസ്തീർണം",
+      current: "സ്ക്രീനിലുള്ള ഫീൽഡ്",
+      another: "മറ്റൊരു ഫീൽഡ് വിശകലനം ചെയ്യുക",
+      newAnalysis: "പുതിയ വിശകലനം",
+      unclassified: "മോഡൽ തരംതിരിക്കാത്തത്",
+      intensityNames: { 0: "നെഗറ്റീവ്", "1+": "ദുർബലം", "2+": "മിതം", "3+": "തീവ്രം" },
       measurement: "അളവ്",
       largestClass: "ഏറ്റവും കൂടുതൽ വിസ്തീർണമുള്ള തീവ്രതാ വിഭാഗം",
       sourceLabel: "ഈ ഫീൽഡിന്റെ ഡാറ്റാസെറ്റ് ലേബൽ {label} ആണ്",
@@ -1167,6 +1199,7 @@ export const STRINGS = {
     },
 
     cases: {
+      statusCol: "നില",
       eyebrow: "ഒപ്പുവയ്ക്കലുകളുടെ ചരിത്രം",
       title: "കേസ് രേഖ",
       demoRows: "ഡെമോ ചരിത്രം",
@@ -1364,3 +1397,21 @@ export const STRINGS = {
     },
   },
 };
+
+/* The AI pre-score panel's and the review tab's strings live in their own files
+   (top-level "prescore", "slides", "review"). */
+for (const lang of ["en", "ml"]) {
+  for (const [key, value] of Object.entries({ ...PRESCORE_STRINGS[lang], ...REVIEW_STRINGS[lang] })) {
+    if (key in STRINGS[lang]) throw new Error(`strings.prescore.js would overwrite ${lang}.${key}`);
+    STRINGS[lang][key] = value;
+  }
+}
+
+/* Accounts and the admin console live in their own file; their top-level keys
+   (roles, status, errors, auth, admin, ...) do not overlap the ones above. */
+for (const lang of ["en", "ml"]) {
+  for (const [key, value] of Object.entries(AUTH_STRINGS[lang])) {
+    if (key in STRINGS[lang]) throw new Error(`strings.auth.js would overwrite ${lang}.${key}`);
+    STRINGS[lang][key] = value;
+  }
+}

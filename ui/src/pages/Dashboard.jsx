@@ -9,7 +9,7 @@ import Icon from "../components/Icon.jsx";
 import { ConcordBadge, ScoreBadge } from "../components/Badges.jsx";
 import { ClassBars, ColumnChart, Donut, Sparkline, StackBar } from "../components/charts/Charts.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
-import { avatarStyle, useAuth } from "../state/AuthContext.jsx";
+import { avatarStyle, jobTitle, useAuth } from "../state/AuthContext.jsx";
 import {
   classForLabel,
   dailyCounts,
@@ -39,7 +39,7 @@ export default function Dashboard() {
     const agreed = reviews.filter((r) => r.agrees).length;
     const flagged = total - agreed;
     const unassessable = reviews.filter((r) => isCannotAssess(r.score)).length;
-    const mine = reviews.filter((r) => r.reviewer === user.name).length;
+    const mine = reviews.filter((r) => (r.reviewer_id ? r.reviewer_id === user.id : r.reviewer === user.name)).length;
     return {
       total,
       agreed,
@@ -222,10 +222,12 @@ export default function Dashboard() {
               </span>
               <div style={{ minWidth: 0 }}>
                 <div className="profile-card__name">{user.name}</div>
-                <div className="tiny muted">{t(user.roleKey ?? "demo.role")}</div>
+                <div className="tiny muted">{jobTitle(user, t)}</div>
               </div>
             </div>
-            <p className="tiny muted">{t(user.deptKey ?? "demo.department")}</p>
+            <p className="tiny muted">
+              {user.deptKey ? t(user.deptKey) : user.role ? t(`roles.${user.role}`) : t("demo.department")}
+            </p>
             <div className="profile-card__stats">
               <div>
                 <b>{stats.mine}</b>

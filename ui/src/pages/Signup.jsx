@@ -19,6 +19,8 @@ import { useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import Icon from "../components/Icon.jsx";
 import LangToggle from "../components/LangToggle.jsx";
+import AuthLayout, { FormNote } from "../components/AuthLayout.jsx";
+import PasswordField from "../components/PasswordField.jsx";
 import {
   ROLE_KEYS,
   passwordStrength,
@@ -26,6 +28,7 @@ import {
   validateSignup,
 } from "../state/AuthContext.jsx";
 import { useT } from "../i18n/I18nContext.jsx";
+import { errorText } from "../lib/auth.js";
 
 const STRENGTH_COLORS = [
   "var(--line-strong)",
@@ -35,7 +38,16 @@ const STRENGTH_COLORS = [
   "var(--ok)",
 ];
 
+/* With a server behind the portal, this page asks for an account rather
+   than creating one: the request waits, as a pending account, until an
+   administrator approves it and chooses what the person may do. With no
+   server (the static demo) it keeps the original browser-only sign-up. */
 export default function Signup() {
+  const { isServer } = useAuth();
+  return isServer ? <RequestAccess /> : <DemoSignup />;
+}
+
+function DemoSignup() {
   const { user, signUp } = useAuth();
   const t = useT();
 
@@ -317,5 +329,140 @@ function Field({ id, label, error, children }) {
         </span>
       ) : null}
     </div>
+  );
+}
+
+/* ------------------------------------------------------ request access --- */
+
+function RequestAccess() {
+  const { user, config, requestAccess } = useAuth();
+  const t = useT();
+  const min = config?.password_min_length ?? 10;
+  const [form, setForm] = useState({
+    name: "", email: "", registration: "", title: "", password: "", confirm: "", note: "", accepted: false,
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [sent, setSent] = useState(false);
+
+  if (user) return <Navigate to="/overview" replace />;
+
+  const set = (key) => (event) => {
+    const value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
+    setForm((f) => ({ ...f, [key]: value }));
+    setError(null);
+  };
+  const mismatch = form.confirm && form.confirm !== form.password;
+  const ready =
+    form.name.trim().length >= 2 && form.email.includes("@") && form.password.length >= min &&
+    form.password === form.confirm && form.accepted;
+
+  const onSubmit = async (event) => {
+    event.preventDefault();
+    if (!ready) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await requestAccess({
+        name: form.name, email: form.email, password: form.password,
+        registration: form.registration, title: form.title, note: form.note,
+      });
+      setSent(true);
+    } catch (err) {
+      setError(errorText(err, t));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const poster = { chip: t("signup.posterChip"), chipIcon: "shield", title: t("signup.posterTitle"), body: t("signup.posterBody") };
+
+  if (!config?.allow_access_requests) {
+    return (
+      <AuthLayout poster={poster} siteName={config?.site_name}>
+        <h1>{t("request.closedTitle")}</h1>
+        <p className="auth__lede">{t("request.closedBody")}</p>
+        <Link className="btn btn--primary btn--lg btn--block" to="/login">
+          {t("signup.backToSignIn")} <Icon name="arrowRight" size={16} />
+        </Link>
+      </AuthLayout>
+    );
+  }
+
+  if (sent) {
+    return (
+      <AuthLayout poster={poster} siteName={config?.site_name}>
+        <span className="auth__done" aria-hidden="true">
+          <Icon name="checkCircle" size={30} />
+        </span>
+        <h1>{t("request.sentTitle")}</h1>
+        <p className="auth__lede">{t("request.sentBody")}</p>
+        <Link className="btn btn--primary btn--lg btn--block" to="/login">
+          {t("signup.backToSignIn")} <Icon name="arrowRight" size={16} />
+        </Link>
+      </AuthLayout>
+    );
+  }
+
+  return (
+    <AuthLayout wide poster={poster} siteName={config?.site_name}>
+      <h1>{t("request.title")}</h1>
+      <p className="auth__lede">{t("request.lede")}</p>
+
+      <form onSubmit={onSubmit} noValidate>
+        <div className="field">
+          <label htmlFor="ra-name">{t("signup.name")}</label>
+          <input id="ra-name" className="input" autoComplete="name" placeholder={t("signup.namePlaceholder")}
+            value={form.name} onChange={set("name")} autoFocus />
+        </div>
+        <div className="field">
+          <label htmlFor="ra-email">{t("signup.email")}</label>
+          <input id="ra-email" className="input" type="email" autoComplete="username"
+            placeholder={t("login.emailPlaceholder")} value={form.email} onChange={set("email")} />
+        </div>
+        <div className="auth__pair">
+          <div className="field">
+            <label htmlFor="ra-reg">{t("signup.registration")}</label>
+            <input id="ra-reg" className="input" autoComplete="off" placeholder={t("signup.registrationPlaceholder")}
+              value={form.registration} onChange={set("registration")} />
+          </div>
+          <div className="field">
+            <label htmlFor="ra-title">{t("request.jobTitle")}</label>
+            <input id="ra-title" className="input" placeholder={t("request.jobTitlePlaceholder")}
+              value={form.title} onChange={set("title")} />
+          </div>
+        </div>
+        <PasswordField id="ra-password" label={t("signup.password")} value={form.password}
+          onChange={(v) => { setForm((f) => ({ ...f, password: v })); setError(null); }} minLength={min} />
+        <div className="field">
+          <label htmlFor="ra-confirm">{t("password.confirm")}</label>
+          <input id="ra-confirm" className="input" type="password" autoComplete="new-password"
+            value={form.confirm} onChange={set("confirm")} aria-invalid={Boolean(mismatch)} />
+          {mismatch ? (
+            <span className="field__error"><Icon name="alert" size={13} />{t("password.mismatch")}</span>
+          ) : null}
+        </div>
+        <div className="field">
+          <label htmlFor="ra-note">{t("request.note")}</label>
+          <textarea id="ra-note" className="input textarea" rows={2} maxLength={500}
+            placeholder={t("request.notePlaceholder")} value={form.note} onChange={set("note")} />
+        </div>
+        <label className="check" style={{ alignItems: "flex-start" }}>
+          <input type="checkbox" checked={form.accepted} onChange={set("accepted")} style={{ marginTop: 2 }} />
+          <span>{t("signup.terms")}</span>
+        </label>
+
+        {error ? <FormNote>{error}</FormNote> : null}
+
+        <button type="submit" className="btn btn--primary btn--lg btn--block" disabled={busy || !ready}
+          {...(busy ? { "data-busy": "" } : {})}>
+          {t("request.submit")} <Icon name="arrowRight" size={16} />
+        </button>
+      </form>
+
+      <p className="auth__switch">
+        {t("signup.haveAccount")} <Link to="/login">{t("signup.signIn")}</Link>
+      </p>
+    </AuthLayout>
   );
 }

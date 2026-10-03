@@ -16,3 +16,8 @@ scripts/__pycache__/
 
 # Local convenience files, not part of the build.
 start_server.bat
+
+# Rebuilt inside the image (Dockerfile stage 1).
+ui/node_modules/
+ui/dist/
+dist/

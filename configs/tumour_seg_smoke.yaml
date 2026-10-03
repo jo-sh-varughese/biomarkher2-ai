@@ -1,0 +1,14 @@
+tiger_root: data/external/tiger/tissue-cells
+her2_root: data/raw
+bci_root: data/external/bci
+output_dir: artifacts/tumour_smoke
+seed: 1
+require_gpu: false
+limit_images: 40
+encoder: resnet18
+encoder_weights: null
+crop: 256
+batch: 2
+workers: 0
+samples_per_epoch: 4
+epochs: 1

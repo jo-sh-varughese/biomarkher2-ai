@@ -1,0 +1,7 @@
+# Run 0 (~10 min, ~$0.06): proves the pod works end to end and measures real
+# throughput before any long run. Small data, one short epoch, small eval.
+base: v2_base.yaml
+run_name: run0_gpu_check
+data: {limit_per_class: 100}
+train: {epochs: 1, bags_per_epoch: 400, val_limit_per_class: 25, max_minutes: 10, log_every: 10}
+eval: {limit_per_class: 25}

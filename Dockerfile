@@ -1,18 +1,26 @@
 # BioMarkHER2 -- containerized review viewer.
 #
-# This packages the SAME local review viewer app/server.py already warns
-# about: no authentication, no transport security, a pre-scoring aid meant to
-# be demonstrated locally, not exposed to a network. Docker changes how it is
-# launched, not what it is safe to expose it to -- see docker-compose.yml,
-# which binds only to 127.0.0.1 on the host for exactly that reason.
+# The same portal app/server.py serves: real accounts (app/auth.py), but
+# plain HTTP. docker-compose.yml binds it to 127.0.0.1 on the host; to serve
+# other machines, put an HTTPS reverse proxy in front and set
+# BIOMARK_SECURE_COOKIES=1 -- see docs/ACCOUNTS_AND_ADMIN.md.
 #
-# Build & run:
-#   cd ui && npm install && npm run build && cd ..   # once, or whenever ui/ changes
+# Build & run (Docker only -- the React portal is built inside the image):
 #   docker compose up --build
-# Then open http://127.0.0.1:8000 -- same as running app/server.py directly.
-# (The build step needs Node on the HOST, not in this image -- see the
-# COPY ui/dist line below for why.)
+# Then open http://127.0.0.1:8000. On the first run `docker compose logs`
+# shows the one-time link that creates the administrator account, or:
+#   docker compose exec biomarkher2 python -m app.admin_cli create-admin --email ... --name ...
+# Deployment guide: docs/DEPLOYMENT.md.
 
+# ---- stage 1: build the React portal (Node only exists in this stage) ----
+FROM node:22-slim AS ui
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY ui/ ./
+RUN npm run build
+
+# ---- stage 2: the server ----
 FROM python:3.11-slim
 
 # libgomp1: PyTorch's CPU backend links against it; without it `import torch`
@@ -44,30 +52,44 @@ COPY models ./models
 COPY preprocessing ./preprocessing
 COPY training ./training
 COPY evaluation ./evaluation
+# wsi/: whole-slide reading, tumour detection and the /api/slides routes.
+# app/server.py imports it at start-up -- leaving it out made the container
+# exit immediately with ModuleNotFoundError (found 2026-10-03).
+COPY wsi ./wsi
 COPY configs ./configs
 
-# The built React portal only -- not ui/ wholesale, which would drag in
-# node_modules and require a Node stage in this image for no reason: the
-# build step happens once on a dev machine (`npm run build` inside ui/, or
-# the `biomark` command), and this image only ever serves the static
-# result. Build it before `docker compose up --build` or this COPY fails.
-COPY ui/dist ./ui/dist
+# Only the built static portal from stage 1 -- no Node, no node_modules here.
+COPY --from=ui /ui/dist ./ui/dist
 
 # Not copied: data/ and artifacts/. Both are large (the patch dataset is
 # ~1.5 GB; checkpoints are hundreds of MB) and machine-specific -- see
 # .dockerignore. Mounted as volumes instead (docker-compose.yml), so a
 # dataset or checkpoint never has to be baked into an image layer and
 # re-uploaded on every code change.
-RUN mkdir -p /app/artifacts /app/data
+# Run as an unprivileged user: a bug in request handling must not be able to
+# write outside the mounted artifacts/ directory.
+RUN mkdir -p /app/artifacts /app/data \
+    && useradd --system --uid 10001 --home /app biomark \
+    && chown -R biomark /app/artifacts
+USER biomark
 
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
+# /api/health is public and reports only whether the models are loaded.
+# Model loading takes ~30-60 s on CPU, hence the start period.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=8).status == 200 else 1)"
+
 # Binds to 0.0.0.0 INSIDE the container -- Docker's own network isolation is
 # what makes this safe; docker-compose.yml maps that to 127.0.0.1 only on the
-# host, preserving the "local demonstration only" guarantee app/server.py's
-# module docstring states. Do not publish this port more broadly without
-# adding real authentication in front of it first.
+# host. Publishing it more broadly needs HTTPS in front (a reverse proxy) and
+# BIOMARK_SECURE_COOKIES=1; the accounts themselves are already enforced.
 ENTRYPOINT ["python", "-m", "app.server", "--host", "0.0.0.0"]
-CMD ["--run", "artifacts/phase2_unet", "--patch-root", "data/raw"]
+# Models are read from the mounted artifacts/ (see docs/DEPLOYMENT.md for the
+# exact files): the stain map (phase2_unet), the AI pre-score (v2/run_b) and
+# the tumour segmenter (tumour/). Whole slides are read from data/slides.
+CMD ["--run", "artifacts/phase2_unet", "--patch-root", "data/raw", \
+     "--prescore-run", "artifacts/v2/run_b/best.pt", \
+     "--slide-root", "data/slides", "--tumour-model", "artifacts/tumour/best.pt"]

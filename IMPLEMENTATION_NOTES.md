@@ -38,9 +38,19 @@ is CPU-only with no GPU, shapes almost every engineering choice below.
 Concretely, that rule has been enforced as actual code and actual tests, not
 just as a sentence in a document:
 
-- **No code path anywhere produces a field called `score`, `her2_score`,
-  `verdict`, or `diagnosis`.** `tests/test_app.py` asserts this by scanning
+- **No code path produces a `verdict` or `diagnosis`, and there is no bare
+  `score` / `her2_score` field.** `tests/test_app.py` asserts this by scanning
   the JSON the server returns.
+- **An AI pre-score exists, deliberately gated (changed 2026-10-02 at the
+  project owner's request).** It lives only under `ai_prescore`, always
+  carries `requires_pathologist_confirmation: true`, and is shown only when
+  the site safety gate (`evaluation/safety_gate.py`) has validated the site
+  on local cases -- or in an explicit `--research-prescores` mode where every
+  pre-score is marked unvalidated. At any other site it is computed,
+  withheld and logged (`--shadow-log`) for later validation. Why: at a
+  hospital the model had never seen, its most confident answers were its
+  worst (25.6% correct in the top 20% by confidence; docs/V2_TRAINING_PLAN.md).
+  Tests pin each of these behaviours. Full description: docs/PRESCORING_SYSTEM.md.
 - **A human-review step is mandatory and cannot fire automatically.** The
   review UI only submits on an explicit form `submit` event, requires a
   reviewer identity, and offers "cannot assess from this field" as a first

@@ -42,7 +42,7 @@ export default function Cases() {
       if (filter === "concordant" && !r.agrees) return false;
       if (filter === "unassessable" && !isCannotAssess(r.score)) return false;
       if (!needle) return true;
-      return [r.patch_id, r.reviewer, noteOf(r, t), r.score]
+      return [r.patch_id, r.reviewer, noteOf(r, t), r.score, r.accession, r.ish_decision]
         .filter(Boolean)
         .some((field) => field.toLowerCase().includes(needle));
     });
@@ -113,6 +113,8 @@ export default function Cases() {
                 <tr>
                   <th scope="col">{t("table.field")}</th>
                   <th scope="col">{t("table.assessment")}</th>
+                  <th scope="col">{t("cases.statusCol")}</th>
+                  <th scope="col">ISH</th>
                   <th scope="col">{t("table.datasetLabel")}</th>
                   <th scope="col" className="num">{t("table.tissue")}</th>
                   <th scope="col">{t("table.reviewer")}</th>
@@ -130,6 +132,14 @@ export default function Cases() {
                     <td data-label={t("table.assessment")}>
                       <ScoreBadge score={r.score} classes={classes} t={t} />
                     </td>
+                    <td data-label={t("cases.statusCol")}>
+                      <span className={`review__status review__status--${r.status ?? "final"}`}>
+                        {t(`review.status.${r.status ?? "final"}`)}
+                        {r.version > 1 ? ` · v${r.version}` : ""}
+                      </span>
+                      {r.accession ? <div className="tiny muted mono">{r.accession}</div> : null}
+                    </td>
+                    <td className="muted" data-label="ISH">{r.ish_decision ?? "—"}</td>
                     <td className="muted" data-label={t("table.datasetLabel")}>{r.dataset_label ?? "—"}</td>
                     <td className="num" data-label={t("table.tissue")}>
                       {r.tissue_percent != null ? pct(r.tissue_percent) : "—"}

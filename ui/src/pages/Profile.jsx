@@ -1,42 +1,32 @@
 /* ============================================================================
    Profile.
 
-   This page edits the two fields that end up inside a signed clinical
-   record -- the reviewer's name and registration number -- so it leads with
+   This page edits the fields that end up inside a signed clinical record --
+   the reviewer's name, registration number and job title -- so it leads with
    that fact rather than treating them as ordinary account settings.
 
-   It is also honest about which parts of the account it can actually change.
-   The demo account has no user record behind it, so its edits live in the
-   session and end at sign-out, and its password is fixed in the bundle. Both
-   are stated on the page instead of being discovered by a save that silently
-   does nothing.
+   It is also honest about which parts of the account it can change. On the
+   server, email and role belong to the administrator, and changing the
+   password ends every other session. In the demo, the built-in account has
+   no user record behind it, so its edits live in the session and its
+   password is fixed in the bundle. Both are stated on the page instead of
+   being discovered by a save that silently does nothing.
    ==========================================================================*/
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "../components/Icon.jsx";
-import {
-  AVATAR_COLORS,
-  ROLE_KEYS,
-  avatarStyle,
-  passwordStrength,
-  useAuth,
-} from "../state/AuthContext.jsx";
+import PasswordField from "../components/PasswordField.jsx";
+import { AVATAR_COLORS, ROLE_KEYS, avatarStyle, useAuth } from "../state/AuthContext.jsx";
 import { useTheme } from "../state/ThemeContext.jsx";
 import { useI18n } from "../i18n/I18nContext.jsx";
 import { useToast } from "../state/ToastContext.jsx";
 import { LANGS } from "../i18n/I18nContext.jsx";
-import { dateTime, initials } from "../lib/format.js";
-
-const STRENGTH_COLORS = [
-  "var(--line-strong)",
-  "var(--danger)",
-  "var(--warn)",
-  "var(--accent)",
-  "var(--ok)",
-];
+import { dateTime, initials, relativeTime } from "../lib/format.js";
+import { errorText, mySessions, revokeMySession, revokeOtherSessions } from "../lib/auth.js";
+import { device, deviceLabel } from "./admin/shared.jsx";
 
 export default function Profile() {
-  const { user, updateProfile, changePassword, signOut } = useAuth();
+  const { user, isServer, config, updateProfile, changePassword, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
   const { t, lang, setLang, locale } = useI18n();
   const toast = useToast();
@@ -45,6 +35,7 @@ export default function Profile() {
     name: user.name ?? "",
     registration: user.registration ?? "",
     roleKey: user.roleKey ?? ROLE_KEYS[0],
+    title: user.title ?? "",
     accent: user.accent ?? AVATAR_COLORS[0].id,
   });
   const [saving, setSaving] = useState(false);
@@ -53,6 +44,7 @@ export default function Profile() {
   const [pwBusy, setPwBusy] = useState(false);
   const [pwError, setPwError] = useState(null);
   const securityRef = useRef(null);
+  const minLength = isServer ? (config?.password_min_length ?? 10) : 8;
 
   // Deep-link from the account menu's "Preferences" item.
   useEffect(() => {
@@ -65,13 +57,13 @@ export default function Profile() {
     () =>
       form.name.trim() !== (user.name ?? "") ||
       form.registration.trim() !== (user.registration ?? "") ||
-      form.roleKey !== (user.roleKey ?? ROLE_KEYS[0]) ||
-      form.accent !== (user.accent ?? AVATAR_COLORS[0].id),
-    [form, user],
+      form.accent !== (user.accent ?? AVATAR_COLORS[0].id) ||
+      (isServer ? form.title.trim() !== (user.title ?? "") : form.roleKey !== (user.roleKey ?? ROLE_KEYS[0])),
+    [form, user, isServer],
   );
 
-  const nameOk = form.name.trim().length >= 3;
-  const regOk = form.registration.trim().length >= 4;
+  const nameOk = form.name.trim().length >= (isServer ? 2 : 3);
+  const regOk = isServer || form.registration.trim().length >= 4;
 
   const onSave = async (event) => {
     event.preventDefault();
@@ -82,26 +74,33 @@ export default function Profile() {
     if (!nameOk || !regOk) return;
     setSaving(true);
     try {
-      await updateProfile({
-        name: form.name.trim(),
-        registration: form.registration.trim().toUpperCase(),
-        roleKey: form.roleKey,
-        accent: form.accent,
-      });
+      await updateProfile(
+        isServer
+          ? {
+              name: form.name.trim(),
+              registration: form.registration.trim().toUpperCase(),
+              title: form.title.trim(),
+              accent: form.accent,
+            }
+          : {
+              name: form.name.trim(),
+              registration: form.registration.trim().toUpperCase(),
+              roleKey: form.roleKey,
+              accent: form.accent,
+            },
+      );
       toast.ok(t("profile.saved"), t("profile.savedBody"));
     } catch (err) {
-      toast.error(t("toast.recordFailed"), err.i18nKey ? t(err.i18nKey) : err.message);
+      toast.error(t("toast.recordFailed"), errorText(err, t));
     } finally {
       setSaving(false);
     }
   };
 
-  const pwStrength = passwordStrength(pw.next);
   const pwValid =
     pw.current.length > 0 &&
-    pw.next.length >= 8 &&
-    /[a-zA-Z]/.test(pw.next) &&
-    /\d/.test(pw.next) &&
+    pw.next.length >= minLength &&
+    (isServer || (/[a-zA-Z]/.test(pw.next) && /\d/.test(pw.next))) &&
     pw.next === pw.confirm;
 
   const onChangePassword = async (event) => {
@@ -112,13 +111,15 @@ export default function Profile() {
     try {
       await changePassword({ current: pw.current, next: pw.next });
       setPw({ current: "", next: "", confirm: "" });
-      toast.ok(t("profile.passwordChanged"), t("profile.passwordChangedBody"));
+      toast.ok(t("profile.passwordChanged"), isServer ? t("account.passwordRules") : t("profile.passwordChangedBody"));
     } catch (err) {
-      setPwError(err.i18nKey ? t(err.i18nKey) : err.message);
+      setPwError(errorText(err, t));
     } finally {
       setPwBusy(false);
     }
   };
+
+  const noticeKey = isServer ? "account.serverNotice" : user.demo ? "profile.demoNotice" : "profile.localNotice";
 
   return (
     <>
@@ -145,7 +146,7 @@ export default function Profile() {
               <span className="note__icon">
                 <Icon name="info" size={16} />
               </span>
-              <span>{t(user.demo ? "profile.demoNotice" : "profile.localNotice")}</span>
+              <span>{t(noticeKey)}</span>
             </div>
 
             <form onSubmit={onSave} style={{ display: "grid", gap: 16 }}>
@@ -199,7 +200,7 @@ export default function Profile() {
               <div className="field">
                 <label htmlFor="pf-email">{t("profile.email")}</label>
                 <input id="pf-email" className="input" type="email" value={user.email} disabled />
-                <p className="hint">{t("profile.emailFixed")}</p>
+                <p className="hint">{t(isServer ? "account.emailByAdmin" : "profile.emailFixed")}</p>
               </div>
 
               <div className="auth__pair">
@@ -214,9 +215,7 @@ export default function Profile() {
                        on save meant the field kept showing what you typed
                        while the stored value differed, which left the form
                        looking unsaved immediately after saving. */
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, registration: e.target.value.toUpperCase() }))
-                    }
+                    onChange={(e) => setForm((f) => ({ ...f, registration: e.target.value.toUpperCase() }))}
                     aria-invalid={!regOk}
                   />
                   {!regOk ? (
@@ -227,27 +226,41 @@ export default function Profile() {
                   ) : null}
                 </div>
 
-                <div className="field">
-                  <label htmlFor="pf-role">{t("profile.role")}</label>
-                  <select
-                    id="pf-role"
-                    className="select"
-                    value={form.roleKey}
-                    onChange={(e) => setForm((f) => ({ ...f, roleKey: e.target.value }))}
-                  >
-                    {ROLE_KEYS.map((key) => (
-                      <option key={key} value={key}>
-                        {t(key)}
-                      </option>
-                    ))}
-                    {/* The demo account's role key is not in the sign-up list;
-                        keep it selectable so opening this page cannot silently
-                        change the reviewer's job title. */}
-                    {ROLE_KEYS.includes(user.roleKey) ? null : (
-                      <option value={user.roleKey}>{t(user.roleKey)}</option>
-                    )}
-                  </select>
-                </div>
+                {isServer ? (
+                  <div className="field">
+                    <label htmlFor="pf-title">{t("account.jobTitle")}</label>
+                    <input
+                      id="pf-title"
+                      className="input"
+                      type="text"
+                      value={form.title}
+                      placeholder={t("account.jobTitlePlaceholder")}
+                      onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+                    />
+                  </div>
+                ) : (
+                  <div className="field">
+                    <label htmlFor="pf-role">{t("profile.role")}</label>
+                    <select
+                      id="pf-role"
+                      className="select"
+                      value={form.roleKey}
+                      onChange={(e) => setForm((f) => ({ ...f, roleKey: e.target.value }))}
+                    >
+                      {ROLE_KEYS.map((key) => (
+                        <option key={key} value={key}>
+                          {t(key)}
+                        </option>
+                      ))}
+                      {/* The demo account's role key is not in the sign-up
+                          list; keep it selectable so opening this page cannot
+                          silently change the reviewer's job title. */}
+                      {ROLE_KEYS.includes(user.roleKey) ? null : (
+                        <option value={user.roleKey}>{t(user.roleKey)}</option>
+                      )}
+                    </select>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -268,7 +281,7 @@ export default function Profile() {
             <div className="card-head">
               <div>
                 <h2>{t("profile.security")}</h2>
-                <p className="sub">{t("profile.securitySub")}</p>
+                <p className="sub">{isServer ? t("account.passwordRules") : t("profile.securitySub")}</p>
               </div>
               <Icon name="lock" size={17} />
             </div>
@@ -282,6 +295,7 @@ export default function Profile() {
               </div>
             ) : (
               <form onSubmit={onChangePassword} style={{ display: "grid", gap: 16 }}>
+                <input type="email" autoComplete="username" value={user.email} readOnly hidden />
                 <div className="field">
                   <label htmlFor="pf-cur">{t("profile.current")}</label>
                   <input
@@ -295,40 +309,13 @@ export default function Profile() {
                 </div>
 
                 <div className="auth__pair">
-                  <div className="field">
-                    <label htmlFor="pf-new">{t("profile.next")}</label>
-                    <input
-                      id="pf-new"
-                      className="input"
-                      type="password"
-                      autoComplete="new-password"
-                      value={pw.next}
-                      onChange={(e) => setPw((s) => ({ ...s, next: e.target.value }))}
-                    />
-                    {pw.next ? (
-                      <div className="strength" aria-live="polite">
-                        <div className="strength__bars">
-                          {[0, 1, 2, 3].map((i) => (
-                            <span
-                              key={i}
-                              className="strength__bar"
-                              style={{
-                                background:
-                                  i < pwStrength ? STRENGTH_COLORS[pwStrength] : "var(--line)",
-                              }}
-                            />
-                          ))}
-                        </div>
-                        <span
-                          className="strength__label"
-                          style={{ color: STRENGTH_COLORS[pwStrength] }}
-                        >
-                          {t("signup.strengthLevels")[pwStrength]}
-                        </span>
-                      </div>
-                    ) : null}
-                  </div>
-
+                  <PasswordField
+                    id="pf-new"
+                    label={t("profile.next")}
+                    value={pw.next}
+                    onChange={(v) => setPw((s) => ({ ...s, next: v }))}
+                    minLength={isServer ? minLength : undefined}
+                  />
                   <div className="field">
                     <label htmlFor="pf-conf">{t("profile.confirm")}</label>
                     <input
@@ -371,6 +358,8 @@ export default function Profile() {
               </form>
             )}
           </section>
+
+          {isServer ? <MySessions t={t} locale={locale} toast={toast} /> : null}
         </div>
 
         {/* ------------------------------------------------------- rail --- */}
@@ -444,26 +433,41 @@ export default function Profile() {
                 <dt>{t("profile.type")}</dt>
                 <dd>
                   <span className={`badge ${user.demo ? "badge--warn" : "badge--accent"}`}>
-                    {t(user.demo ? "profile.typeDemo" : "profile.typeLocal")}
+                    {t(isServer ? "account.typeServer" : user.demo ? "profile.typeDemo" : "profile.typeLocal")}
                   </span>
                 </dd>
               </div>
+              {user.role ? (
+                <div>
+                  <dt>{t("account.access")}</dt>
+                  <dd>
+                    <span className={`role-badge role-badge--${user.role}`}>{t(`roles.${user.role}`)}</span>
+                  </dd>
+                </div>
+              ) : null}
               <div>
                 <dt>{t("profile.email")}</dt>
                 <dd className="mono">{user.email}</dd>
               </div>
+              {isServer ? (
+                <>
+                  <div>
+                    <dt>{t("account.memberSince")}</dt>
+                    <dd>{user.created_at ? dateTime(user.created_at, locale) : "—"}</dd>
+                  </div>
+                  <div>
+                    <dt>{t("account.passwordChanged")}</dt>
+                    <dd>{user.password_changed_at ? relativeTime(user.password_changed_at, t, locale) : "—"}</dd>
+                  </div>
+                </>
+              ) : null}
               <div>
-                <dt>{t("profile.created")}</dt>
+                <dt>{t(isServer ? "account.lastSignIn" : "profile.created")}</dt>
                 <dd>{user.signedInAt ? dateTime(user.signedInAt, locale) : "—"}</dd>
               </div>
             </dl>
 
-            <button
-              type="button"
-              className="btn btn--danger btn--block"
-              style={{ marginTop: 18 }}
-              onClick={signOut}
-            >
+            <button type="button" className="btn btn--danger btn--block" style={{ marginTop: 18 }} onClick={signOut}>
               <Icon name="logout" size={16} /> {t("profile.signOut")}
             </button>
           </section>
@@ -472,5 +476,80 @@ export default function Profile() {
 
       <p className="footer-note">{t("common.notMedicalDevice")}</p>
     </>
+  );
+}
+
+/* Where this account is signed in, with a way to end sessions on devices
+   the person no longer uses. Their own current session is marked and can
+   only be ended by signing out. */
+function MySessions({ t, locale, toast }) {
+  const [sessions, setSessions] = useState(null);
+  const [busy, setBusy] = useState(null);
+
+  const load = useCallback(() => {
+    mySessions()
+      .then((data) => setSessions(data.sessions))
+      .catch(() => setSessions([]));
+  }, []);
+
+  useEffect(load, [load]);
+
+  const others = (sessions ?? []).filter((s) => !s.current);
+
+  const revoke = async (id) => {
+    setBusy(id);
+    try {
+      if (id === "others") await revokeOtherSessions();
+      else await revokeMySession(id);
+      toast.ok(t("account.othersSignedOut"));
+      load();
+    } catch (err) {
+      toast.error(t("toast.recordFailed"), errorText(err, t));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <section className="card card--pad rise">
+      <div className="card-head">
+        <div>
+          <h2>{t("account.sessions")}</h2>
+          <p className="sub">{t("account.sessionsSub")}</p>
+        </div>
+        {others.length ? (
+          <button type="button" className="btn btn--sm" onClick={() => revoke("others")} disabled={busy === "others"}>
+            <Icon name="logout" size={14} /> {t("account.signOutOthers")}
+          </button>
+        ) : null}
+      </div>
+      {sessions === null ? (
+        <span className="skeleton" style={{ height: 52, display: "block" }} />
+      ) : (
+        <ul className="session-list">
+          {sessions.map((s) => (
+            <li key={s.id} className="session-item">
+              <span className="session-item__icon" aria-hidden="true">
+                <Icon name={device(s.user_agent).icon} size={17} />
+              </span>
+              <div className="session-item__text">
+                <b>{deviceLabel(s.user_agent, t)}</b>
+                {s.current ? <span className="you-tag">{t("account.thisDevice")}</span> : null}
+                <span className="tiny muted">
+                  <span className="mono">{s.ip || "—"}</span> ·{" "}
+                  {t("account.lastActive", { when: relativeTime(s.last_seen_at, t, locale) })}
+                </span>
+              </div>
+              {!s.current ? (
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => revoke(s.id)} disabled={busy === s.id}>
+                  {t("account.signOutSession")}
+                </button>
+              ) : null}
+            </li>
+          ))}
+          {!others.length ? <li className="hint">{t("account.noOtherSessions")}</li> : null}
+        </ul>
+      )}
+    </section>
   );
 }

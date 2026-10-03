@@ -118,9 +118,10 @@ The whole site sits behind HTTP Basic Auth, enforced by the edge function in
 unauthenticated visitor gets a 401 and receives no HTML, no JavaScript and no
 demo data — not even the asset bundle.
 
-This is the real gate. The sign-in screen *inside* the app is a demo login
-that runs in the browser and protects nothing; it stays because it is part of
-the portal's workflow, not because it secures anything.
+This is the real gate on Netlify. With no backend there, the sign-in screen
+*inside* the app is the browser-only demo login, which protects nothing. Run
+the portal with its Python backend and the same screen signs in against real
+accounts instead (see [Sign-in and the admin console](#sign-in-and-the-admin-console)).
 
 Netlify's own password protection is a paid-plan feature, so this is the
 free-tier equivalent. The credentials live in environment variables, never in
@@ -190,17 +191,35 @@ client-side — the screen and the exported PDF must not be able to disagree
 about what the tool claims. Only demo-mode caveats come from the string
 table. See `src/i18n/caveats.js`.
 
-## Sign-in
+## Sign-in and the admin console
 
-The demo account is hardcoded on the client, in `src/state/AuthContext.jsx`:
+Two worlds, decided at start-up by asking the backend for `/api/auth/config`
+(`src/state/AuthContext.jsx`):
 
-```
-pathologist@gmck.edu.in  /  her2demo
-```
+- **With the backend** (`biomark`, Docker): real accounts. Sign-in, sessions,
+  roles and the audit log live on the server (`app/auth.py`). The page keeps
+  only the signed-in profile, its permissions, and the CSRF token every change
+  has to carry (`src/lib/api.js`); the session itself is an HttpOnly cookie it
+  never sees. The first administrator is created through a one-time setup link
+  (`/setup`); everyone else is added from the **admin console** (`/admin`), and
+  `/signup` becomes a request for access that an administrator approves.
+  Temporary passwords lead to `/change-password`; invite and reset links land
+  on `/reset`. Full guide: [`docs/ACCOUNTS_AND_ADMIN.md`](../docs/ACCOUNTS_AND_ADMIN.md).
+- **Without a backend** (Netlify, or `npm run dev` with the server stopped):
+  the original browser-only demo. The demo account is hardcoded:
 
-It is printed on the login screen on purpose. It authenticates nobody and
-protects nothing — anyone can read it out of the bundle. Replace it with a
-server-issued session before this portal goes near a real slide.
+  ```
+  pathologist@gmck.edu.in  /  her2demo
+  ```
+
+  It is printed on the login screen on purpose and authenticates nobody. It
+  signs in as an administrator so the admin console can be demonstrated, on a
+  seeded in-browser store labelled *Demo data* (`src/lib/adminApi.js`).
+
+Roles shape what the portal offers: a viewer sees the sign-off panel locked,
+with the reason, and the annotate tool disabled; only administrators see the
+Administration section. The server refuses the same actions regardless of
+what the page shows.
 
 ## What is where
 
@@ -217,8 +236,21 @@ src/
     AnnotationLayer.jsx drag-to-mark regions on the field image, see below
     charts/Charts.jsx   donut, stacked bar, compare/class bars, columns,
                         sparkline, heat-scale colour bar
+    AuthLayout.jsx      the split layout every signed-out screen shares
+    Dialog.jsx          modal or drawer: focus trap, Escape, stacking
+    ConfirmDialog.jsx   "are you sure", optionally type-to-confirm
+    ActionMenu.jsx      a table row's "..." menu
+    PasswordField.jsx   show/hide, strength meter, generator
+    CopyButton.jsx      copy with a fallback for plain-HTTP origins
   pages/
-    Login.jsx           hardcoded demo sign-in
+    Login.jsx           real sign-in with a backend, demo sign-in without
+    Signup.jsx          access request (backend) or demo sign-up
+    Setup.jsx           the first administrator, from the one-time link
+    ResetPassword.jsx   invitation and password-reset links
+    ChangePassword.jsx  replacing a temporary password
+    admin/              the admin console: Overview, Users (+ drawer, add
+                        dialog, action dialogs), Sessions, Audit, Settings,
+                        System; shared.jsx holds badges, labels and loaders
     Dashboard.jsx       KPIs, current field, throughput, recent sign-offs --
                         every figure computed from the review log
     Analysis.jsx        the working screen (see below)
@@ -227,10 +259,13 @@ src/
     Method.jsx          the four caveats, pipeline, data handling
   state/                auth, theme, toasts, shared portal state
   lib/
-    api.js              backend calls, with the demo fallback
+    api.js              backend calls, CSRF, the demo fallback
+    auth.js             /api/auth calls; server error codes -> translated text
+    adminApi.js         /api/admin calls, and the demo-mode console store
     demo.js             deterministic synthetic fields and measurements
     format.js           percentages, dates, initials, dominant class
-  styles/               tokens -> base -> app
+  i18n/strings.auth.js  account + admin console strings, EN and ML
+  styles/               tokens -> base -> app -> admin
 legacy/                 the original index.html, app.js, styles.css
 ```
 

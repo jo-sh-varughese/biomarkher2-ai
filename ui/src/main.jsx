@@ -11,6 +11,7 @@ import "./styles/tokens.css";
 import "./styles/base.css";
 import "./styles/app.css";
 import "./styles/halo.css";
+import "./styles/admin.css";
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>

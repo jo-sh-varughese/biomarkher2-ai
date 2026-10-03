@@ -4,14 +4,54 @@ import Sidebar from "./Sidebar.jsx";
 import Topbar from "./Topbar.jsx";
 import Icon from "./Icon.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
+import { useAuth } from "../state/AuthContext.jsx";
 import { useT } from "../i18n/I18nContext.jsx";
 
 const RAIL_KEY = "bmh2.rail.v1";
+const ANNOUNCE_KEY = "bmh2.announceDismissed.v1";
+
+/* An administrator's announcement, above every page. Dismissing it hides
+   that text for this browser session only -- a changed announcement shows
+   again, because it is new information. */
+function Announcement({ text, t }) {
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return sessionStorage.getItem(ANNOUNCE_KEY);
+    } catch {
+      return null;
+    }
+  });
+  if (!text || dismissed === text) return null;
+  return (
+    <div className="announce" role="status">
+      <Icon name="megaphone" size={16} />
+      <span>
+        <strong>{t("announce.label")}:</strong> {text}
+      </span>
+      <button
+        type="button"
+        className="btn btn--ghost btn--icon btn--sm"
+        aria-label={t("announce.dismiss")}
+        onClick={() => {
+          try {
+            sessionStorage.setItem(ANNOUNCE_KEY, text);
+          } catch {
+            /* Not remembering is fine. */
+          }
+          setDismissed(text);
+        }}
+      >
+        <Icon name="x" size={15} />
+      </button>
+    </div>
+  );
+}
 
 export default function AppShell() {
   const [navOpen, setNavOpen] = useState(false);
   const { pathname } = useLocation();
   const { context } = usePortal();
+  const { announcement } = useAuth();
   const t = useT();
 
   // Collapsed-to-a-rail is a desktop preference and is remembered, because a
@@ -60,6 +100,8 @@ export default function AppShell() {
           onToggleRail={toggleRail}
           railCollapsed={collapsed}
         />
+
+        <Announcement text={announcement} t={t} />
 
         <div className="safety-strip" role="note">
           <Icon name="shield" size={16} />

@@ -137,3 +137,26 @@ def test_reference_vectors_match_published_values():
     """Guards against an accidental edit to the published constants."""
     np.testing.assert_allclose(HEMATOXYLIN, [0.650, 0.704, 0.286])
     np.testing.assert_allclose(DAB, [0.268, 0.570, 0.776])
+
+
+def test_macenko_recovers_haematoxylin_then_dab_from_a_mixed_field():
+    """Regression for two bugs fixed together (see estimate_macenko_stain_matrix).
+
+    1. eigh's arbitrary eigenvector sign could put the principal axis
+       pointing away from the data, wrapping the projected angles around
+       +/-pi so both estimated stains collapsed onto one direction.
+    2. The H/DAB ordering compared R-minus-B absorbance the wrong way round
+       and returned DAB in the haematoxylin row.
+    Both together left H.DAB cosine at ~1.0 on most real patches.
+    """
+    from preprocessing.stains import estimate_macenko_stain_matrix
+
+    rng = np.random.default_rng(0)
+    size = 96
+    h = rng.uniform(0.1, 0.9, (size, size)) * (rng.random((size, size)) > 0.25)
+    d = np.clip(rng.gamma(2.0, 0.25, (size, size)), 0, 1.5) * (rng.random((size, size)) > 0.25)
+    estimated = estimate_macenko_stain_matrix(render_from_concentrations(h, d))
+    reference = build_stain_matrix()
+    assert float(estimated[0] @ reference[0]) > 0.99  # haematoxylin row
+    assert float(estimated[1] @ reference[1]) > 0.99  # DAB row
+    assert float(estimated[0] @ estimated[1]) < 0.9  # two distinct stains
