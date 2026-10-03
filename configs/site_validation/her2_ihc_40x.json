@@ -1,0 +1,21 @@
+{
+  "n": 1904,
+  "accuracy": 0.9233193277310925,
+  "qwk": 0.9754065364068084,
+  "big_error_rate": 0.0021008403361344537,
+  "fingerprint": {
+    "measurements": {
+      "dab_strength_ratio": 1.0,
+      "haematoxylin_vector_angle_deg": 0.0,
+      "dab_vector_angle_deg": 0.0
+    },
+    "corrections": {
+      "resize_factor": 1.0
+    }
+  },
+  "site": "HER2-IHC-40x (training site, UMMC)",
+  "model": "artifacts/v2/run_b/best.pt (epoch 11)",
+  "validated_on": "1,904 reserved holdout patches, patch-level labels; never used for training or model selection",
+  "microns_per_pixel": 0.24,
+  "date": "2026-10-02"
+}

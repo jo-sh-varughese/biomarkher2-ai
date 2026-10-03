@@ -1,0 +1,49 @@
+{
+  "nucleus_sigma": 2.0,
+  "min_nucleus_area": 400,
+  "max_nucleus_area": 25000,
+  "split_min_distance": 20,
+  "cell_expand": 70,
+  "membrane_width": 6,
+  "sectors": 24,
+  "complete_fraction": 0.5,
+  "any_fraction": 0.1,
+  "rule_percent": 10.0,
+  "membrane_faint": 0.25,
+  "membrane_strong": 0.8,
+  "min_cells": 100,
+  "calibration": {
+    "fit_patches": 80,
+    "fit_accuracy": 0.825,
+    "fit_qwk": 0.9326923076923077,
+    "holdout_patches": 100,
+    "holdout_accuracy": 0.72,
+    "holdout_qwk": 0.844,
+    "holdout_confusion": [
+      [
+        16,
+        8,
+        1,
+        0
+      ],
+      [
+        3,
+        13,
+        9,
+        0
+      ],
+      [
+        0,
+        0,
+        19,
+        6
+      ],
+      [
+        1,
+        0,
+        0,
+        24
+      ]
+    ]
+  }
+}

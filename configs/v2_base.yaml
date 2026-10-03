@@ -1,0 +1,63 @@
+# Multi-task U-Net (segmentation + HER2 score head) -- shared settings.
+# Plan, targets and protocol: docs/V2_TRAINING_PLAN.md. Each run file below
+# names this file as `base:` and overrides only what differs.
+seed: 20261002
+gpu_price_per_hour: 0.34          # RTX 4090 community; only used to log estimated spend
+weights_dir: data/weights
+
+data:
+  her2_root: data/raw
+  her2_split: configs/splits/her2_ihc_40x_split.json
+  bci_root: data/external/bci_full/IHC
+  bci_subset_list: configs/splits/bci_test_subset_338.txt
+  site_profiles: configs/site_profiles/her2_ihc_40x_vs_bci.json
+  train_sites: [her2_ihc_40x]
+  limit_per_class: null
+
+model:
+  encoder: resnet50
+  encoder_weights: lunit_bt       # pathology self-supervised ResNet-50 (Lunit); a missing/mismatched file fails loudly
+  dropout: 0.2
+
+loss:
+  score_weight: 1.0
+  seg_weight: 0.5                 # keeps the explainable intensity map the viewer shows
+  ordinal_weight: 0.2             # |expected score - label|: punishes 0-vs-3+ more than 2+-vs-3+
+  label_smoothing: 0.05
+
+augment:
+  zoom: [0.8, 1.25]               # magnification differences between scanners
+  stain:
+    vector_degrees: 8             # stain hue: pure site noise, jittered strongly
+    h_scale: [0.7, 1.4]
+    dab_scale: [0.75, 1.3]        # moderate on purpose: DAB darkness IS the HER2 signal
+    shift: 0.03
+  colour: {brightness: 0.06, contrast: 0.1}
+  scanner: {p: 0.3, max_sigma: 1.2, noise: 0.02}
+
+train:
+  epochs: 12
+  bags_per_epoch: 4000            # one bag = one patch (4 tiles) or one BCI crop (4 tiles)
+  batch_bags: 4                   # 16 tiles of 512 px per step
+  lr: 3.0e-4
+  encoder_lr_mult: 0.3
+  weight_decay: 1.0e-4
+  warmup_fraction: 0.05
+  max_grad_norm: 1.0
+  workers: 6
+  eval_batch: 4
+  val_limit_per_class: 150        # validation every epoch: 600 of our val patches (+ BCI val in runs B/C)
+  max_minutes: 120                # hard wall-clock cap; evaluation still runs afterwards
+  log_every: 25
+  resume: true
+
+eval:
+  sets: [her2_ihc_40x_holdout, bci_test]
+  site_norm: true
+  batch: 4
+
+# Pre-registered (docs/V2_TRAINING_PLAN.md). "in_domain" = a site the run
+# trained on; "unseen_site" = a site it never saw.
+targets:
+  in_domain: {accuracy: 0.90, qwk: 0.90}
+  unseen_site: {accuracy: 0.80, qwk: 0.80}

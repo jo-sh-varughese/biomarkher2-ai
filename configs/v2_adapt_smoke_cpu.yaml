@@ -1,0 +1,6 @@
+# Local CPU smoke test of adapt_v2.py on the smoke checkpoint.
+base: v2_smoke_cpu.yaml
+run_name: adapt_smoke_cpu
+adapt: {checkpoint: artifacts/v2/smoke_cpu/best.pt, bn_alpha: 1.0, bn_max_bags: 2, limit_per_class: 1}
+self_train: {steps: 2, lr: 3.0e-5, threshold: 0.0, ema: 0.9, unsup_weight: 1.0, ordinal_weight: 0.2, prior: null, source_bags: 1, target_bags: 1, workers: 0, log_every: 1}
+eval: {batch: 1}

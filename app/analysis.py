@@ -15,8 +15,17 @@ Two things it does that are not incidental:
   percentages are of *tumour cells*. These are not that, and the two diverge
   whenever stroma content varies.
 
-Nothing here produces a HER2 score. It produces measurements for a pathologist
-to read.
+It also adds, when a pre-score model is loaded (app/prescore.py):
+
+* an **AI pre-score** -- shown ONLY when the site safety gate
+  (evaluation/safety_gate.py) has validated this site, or in an explicitly
+  enabled research mode where it is labelled unvalidated. Otherwise it is
+  computed, withheld, and logged for later local validation;
+* **cell-level ASCO/CAP evidence** (app/cells.py), always;
+* **suggested next steps / ISH guidance** (app/guidance.py), always.
+
+Every pre-score is a suggestion that requires pathologist confirmation. No
+field is ever a "verdict" or "diagnosis".
 """
 
 from __future__ import annotations
@@ -102,8 +111,8 @@ DENOMINATOR_CAVEAT = (
 )
 
 NOT_A_SCORE = (
-    "This is a pre-scoring measurement aid. It does not assign a HER2 score "
-    "and is not a diagnosis. A pathologist assigns the score."
+    "This is a pre-scoring aid. Any AI pre-score shown is a suggestion that requires confirmation by a "
+    "qualified pathologist; it is not a diagnosis. The pathologist assigns the score."
 )
 
 # Deliberately shares no colour with INTENSITY_COLORS. The ambiguity panel
@@ -271,8 +280,21 @@ def to_data_uri(array: np.ndarray, max_side: int = 640) -> str:
     return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
-def percentages(classes: np.ndarray) -> dict[str, float]:
-    """Tissue-area percentage per class name. Background is excluded."""
+def percentages(classes: np.ndarray, tissue: np.ndarray | None = None) -> dict[str, float]:
+    """Percentage of the detected TISSUE in each intensity class.
+
+    With ``tissue`` given, the denominator is the tissue mask itself -- the
+    same for the model and the baseline. Without it (older callers), the
+    denominator is the non-background pixels of ``classes``. The difference
+    matters: the model labels some tissue pixels "background" (1-15% of the
+    tissue on held-out fields, measured 2026-10-03); dropping them from its
+    denominator inflated every model class relative to the baseline column
+    while both were labelled "% of detected tissue".
+    """
+    if tissue is not None:
+        n = int(tissue.sum())
+        return {CLASS_NAMES[c]: round(100 * float(((classes == c) & tissue).sum()) / max(1, n), 2)
+                for c in range(1, NUM_CLASSES)}
     distribution = area_distribution(classes)
     return {
         CLASS_NAMES[c]: round(100 * distribution.fractions.get(c, 0.0), 2)
@@ -295,6 +317,13 @@ class PatchAnalysis:
     where" for whichever class matters, not just whichever has the most
     area. See isolate_overlays()."""
     disagreement_percent: float = 0.0
+    model_unclassified_percent: float = 0.0
+    """Share of the tissue the model labelled background (no intensity class).
+    Reported on its own so the model column still adds up honestly."""
+    ai_prescore: dict | None = None
+    """Gated AI pre-score block (see Analyzer._explain); None when no pre-score model is loaded."""
+    cell_evidence: dict | None = None
+    guidance: dict | None = None
     conformal: dict | None = None
     """None when no calibration artifact is loaded at all. When a calibrator
     IS loaded, always a dict with at least "available": True -- see
@@ -309,6 +338,10 @@ class PatchAnalysis:
             "targets": TARGET_CAVEAT,
             "denominator": DENOMINATOR_CAVEAT,
         }
+        if self.cell_evidence:
+            caveats["cells"] = self.cell_evidence.get("caveat", "")
+        if self.guidance:
+            caveats["guidance"] = self.guidance.get("caveat", "")
         if conformal.get("available"):
             note = (
                 f"Conformal prediction (alpha={conformal['alpha']}): "
@@ -328,9 +361,13 @@ class PatchAnalysis:
             "model_percentages": self.model_percentages,
             "baseline_percentages": self.baseline_percentages,
             "disagreement_percent": self.disagreement_percent,
+            "model_unclassified_percent": self.model_unclassified_percent,
             "images": self.images,
             "isolate": self.isolate,
             "conformal": conformal,
+            "ai_prescore": self.ai_prescore,
+            "cell_evidence": self.cell_evidence,
+            "guidance": self.guidance,
             "caveats": caveats,
         }
 
@@ -352,6 +389,10 @@ class Analyzer:
         training_config: str | Path = "configs/training.yaml",
         preprocessing_config: str | Path = "configs/preprocessing.yaml",
         conformal_alpha: float = 0.10,
+        prescore_checkpoint: str | Path | None = None,
+        site_policy: dict | None = None,
+        cell_params_path: str | Path | None = "configs/cell_params.json",
+        shadow_log: str | Path | None = None,
     ) -> None:
         self.run_dir = Path(run_dir)
         checkpoint_path = self.run_dir / "best.pt"
@@ -406,6 +447,26 @@ class Analyzer:
         if loaded is not None:
             self.calibrator, self.calibration_bandwidth = loaded
             self.conformal_stale = self._calibration_is_stale(checkpoint_path)
+
+        # --- AI pre-score, cell evidence, guidance -------------------------
+        from app.cells import load_cell_params
+
+        # The site policy comes from the safety gate (app/server.py builds it).
+        # With no policy at all nothing is shown: an unconfigured site is unvalidated.
+        self.site_policy = site_policy or {"site": "unconfigured", "status": "shadow_mode", "show_scores": False,
+                                           "research_mode": False, "reasons": ["No site policy configured."],
+                                           "microns_per_pixel_scale": 1.0}
+        self.cell_params = load_cell_params(cell_params_path, float(self.site_policy.get("microns_per_pixel_scale", 1.0)))
+        self.shadow_log = Path(shadow_log) if shadow_log else None
+        self.prescore_engine = None
+        if prescore_checkpoint and Path(prescore_checkpoint).is_file():
+            try:
+                from app.prescore import PrescoreEngine
+
+                self.prescore_engine = PrescoreEngine(prescore_checkpoint)
+            except Exception as exc:  # noqa: BLE001 - degrade, don't crash
+                print(f"NOTE: could not load pre-score model {prescore_checkpoint} ({type(exc).__name__}: {exc}); "
+                      "analyses will carry cell evidence only.")
 
     def _calibration_is_stale(self, checkpoint_path: Path) -> bool:
         """Whether the loaded calibration was computed against a DIFFERENT
@@ -548,7 +609,9 @@ class Analyzer:
         predicted = np.where(processed.tissue_mask, predicted, 0).astype(np.uint8)
 
         tissue = processed.tissue_mask
-        disagree = (predicted != baseline) & tissue
+        # Compare only where the model gave a class; its unclassified tissue is
+        # reported separately (model_unclassified_percent), not as disagreement.
+        disagree = (predicted != baseline) & tissue & (predicted > 0)
         tissue_pixels = int(tissue.sum())
 
         conformal, ambiguity_image = self._conformal_fields(
@@ -584,17 +647,89 @@ class Analyzer:
             for name, image in isolate_overlays(processed.normalized, predicted).items()
         }
 
+        ai_prescore, cell_evidence, guidance = self._explain(processed, patch_id, images)
+
         return PatchAnalysis(
             patch_id=patch_id,
             width=int(rgb.shape[1]),
             height=int(rgb.shape[0]),
             tissue_percent=round(100 * tissue_pixels / max(1, tissue.size), 2),
-            model_percentages=percentages(predicted),
-            baseline_percentages=percentages(baseline),
+            model_percentages=percentages(predicted, tissue),
+            baseline_percentages=percentages(baseline, tissue),
             disagreement_percent=round(
                 100 * int(disagree.sum()) / max(1, tissue_pixels), 2
             ),
+            model_unclassified_percent=round(100 * int(((predicted == 0) & tissue).sum()) / max(1, tissue_pixels), 2),
             images=images,
             isolate=isolate,
             conformal=conformal,
+            ai_prescore=ai_prescore,
+            cell_evidence=cell_evidence,
+            guidance=guidance,
         )
+
+    def _explain(self, processed, patch_id: str, images: dict) -> tuple[dict | None, dict, dict]:
+        """Cell evidence + (gated) AI pre-score + suggested next steps; adds explanation images."""
+        from app.cells import analyze_cells, overlay_cells, public_cells
+        from app.guidance import recommend
+
+        cells = analyze_cells(processed.normalized, processed.tissue_mask, self.preprocessing.stain.thresholds(),
+                              self.cell_params)
+        images["cells"] = to_data_uri(overlay_cells(processed.normalized, cells))
+        cell_evidence = dict(cells["summary"])
+        cell_evidence["cells"] = public_cells(cells["cells"])[:2000]
+
+        policy = self.site_policy
+        block = None
+        shown = None
+        if self.prescore_engine is not None:
+            from app.prescore import evidence_overlay, regions_overlay
+
+            result = self.prescore_engine.run(processed.original, processed.tissue_mask)
+            public = result.public()
+            show = bool(policy.get("show_scores")) or bool(policy.get("research_mode"))
+            block = {"available": True, "site": policy.get("site"), "gate_status": policy.get("status"),
+                     "shown": show, "validated": bool(policy.get("show_scores")),
+                     "requires_pathologist_confirmation": True}
+            if show:
+                from app.prescore import prediction_set
+
+                ckpt = getattr(self.prescore_engine, "checkpoint", None)
+                public["prediction_set"] = (prediction_set(public["probabilities"], Path(ckpt).parent, policy.get("site"))
+                                            if ckpt else {"available": False, "reason": "No conformal calibration for this model."})
+                block["prescore"] = public
+                if not policy.get("show_scores"):
+                    block["warning"] = ("RESEARCH MODE: this site is not locally validated; this pre-score must not "
+                                        "inform patient care.")
+                images["evidence"] = to_data_uri(evidence_overlay(processed.original, result.evidence_map))
+                images["regions"] = to_data_uri(regions_overlay(processed.original, result))
+                shown = public
+            else:
+                block["withheld_reasons"] = list(policy.get("reasons") or [])
+                self._log_shadow(patch_id, public)
+        from app.decision import decision_support
+
+        decision = decision_support(processed.normalized, processed.tissue_mask, cells["cells"], cells["summary"],
+                                    self.cell_params, self.preprocessing.stain.thresholds(), shown, block)
+        guidance = recommend(shown, cells["summary"], policy, near_2plus=decision["near_2plus"])
+        cell_evidence["decision_support"] = decision
+        from app.explain import build_explanation
+
+        cell_evidence["explanation"] = build_explanation(
+            processed.normalized, cells, cells["summary"], shown, block, guidance, self.cell_params,
+            self.preprocessing.stain.thresholds())
+        return block, cell_evidence, guidance
+
+    def _log_shadow(self, patch_id: str, public: dict) -> None:
+        """Withheld pre-scores are logged so the site can later be validated against pathologists."""
+        if self.shadow_log is None:
+            return
+        from datetime import datetime, timezone
+
+        self.shadow_log.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"patch_id": patch_id, "site": self.site_policy.get("site"),
+                 "recorded_at": datetime.now(timezone.utc).isoformat(),
+                 "prescore": {k: public[k] for k in ("category", "probabilities", "confidence")},
+                 "model": public["model"]}
+        with self.shadow_log.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry) + "\n")

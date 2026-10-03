@@ -2,12 +2,17 @@
    The one place that knows how to talk to the backend.
 
    Every call tries the real endpoint first. If the backend is unreachable --
-   a fetch-level failure, or a 404 from a static host serving the bundle with
-   no Python behind it -- the call degrades to the demo module and marks the
-   result `demo: true`. A non-2xx response that the *server itself* produced
-   (a 400 with an error message, say) is a real error and is surfaced as one:
-   silently swallowing those would hide genuine backend faults behind fake
-   data, which is the opposite of what this fallback is for.
+   a fetch-level failure, or a static host serving the bundle with no Python
+   behind it (it answers /api/* with HTML, never JSON) -- the call degrades to
+   the demo module and marks the result `demo: true`. A non-2xx response that
+   the *server itself* produced (JSON with an error message) is a real error
+   and is surfaced as one: silently swallowing those would hide genuine
+   backend faults behind fake data, which is the opposite of what this
+   fallback is for.
+
+   Signed-in requests ride on an HttpOnly session cookie the page cannot read,
+   plus the session's CSRF token, which the server hands over at sign-in and
+   which every state-changing request must echo in X-CSRF-Token.
    ==========================================================================*/
 
 import { demoAnalysis, demoContext, DEMO_REVIEWS } from "./demo.js";
@@ -16,33 +21,98 @@ import { demoAnalysis, demoContext, DEMO_REVIEWS } from "./demo.js";
    the session goes straight to demo data instead of stalling on every call. */
 let offline = false;
 export const isOffline = () => offline;
+export const markOffline = () => {
+  offline = true;
+};
 
-class ApiError extends Error {}
+let csrfToken = null;
+export const setCsrfToken = (token) => {
+  csrfToken = token || null;
+};
+
+export class ApiError extends Error {}
+
+/* Server errors carry a stable `code` (translated by errorText) and any
+   values the message needs, alongside the English message. */
+function serverError(data, response) {
+  const err = new Error(data.error || response.statusText || "Request failed");
+  err.fromServer = true;
+  err.status = response.status;
+  err.code = data.code;
+  err.extra = data;
+  if (response.status === 401 && data.code === "unauthenticated") {
+    window.dispatchEvent(new CustomEvent("bmh2:unauthenticated"));
+  }
+  if (response.status === 403 && data.code === "password_change_required") {
+    window.dispatchEvent(new CustomEvent("bmh2:password-change-required"));
+  }
+  return err;
+}
+
+function withAuth(options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const headers = { ...(options.headers || {}) };
+  if (method !== "GET" && csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  return { credentials: "same-origin", ...options, method, headers };
+}
 
 async function request(path, options) {
   let response;
   try {
-    response = await fetch(path, options);
+    response = await fetch(path, withAuth(options));
   } catch {
     offline = true;
     throw new ApiError("unreachable");
   }
   // A static host with no API behind it answers /api/* with its SPA fallback
-  // or a 404 -- both mean "no backend", not "backend said no".
+  // or an HTML 404 -- that means "no backend", not "backend said no". The
+  // real backend answers every /api/* path with JSON, errors included.
   const type = response.headers.get("content-type") || "";
-  if (response.status === 404 || !type.includes("application/json")) {
-    if (!response.ok || !type.includes("application/json")) {
-      offline = true;
-      throw new ApiError("unreachable");
-    }
+  if (!type.includes("application/json")) {
+    offline = true;
+    throw new ApiError("unreachable");
   }
   const data = await response.json();
-  if (!response.ok) {
-    const err = new Error(data.error || response.statusText || "Request failed");
-    err.fromServer = true;
-    throw err;
-  }
+  if (!response.ok) throw serverError(data, response);
   return data;
+}
+
+/** JSON request to the real backend, with no demo fallback. */
+export async function apiRequest(path, { method = "GET", body, signal } = {}) {
+  return request(path, {
+    method,
+    signal,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
+/** Downloads a file the backend streams (CSV, JSONL) with the session. */
+export async function downloadFile(path, fallbackName) {
+  let response;
+  try {
+    response = await fetch(path, withAuth());
+  } catch {
+    throw new Error("The server could not be reached.");
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw serverError(data, response);
+  }
+  saveBlob(await response.blob(), response.headers.get("Content-Disposition"), fallbackName);
+  return true;
+}
+
+function saveBlob(blob, disposition, fallbackName) {
+  const match = (disposition || "").match(/filename="([^"]+)"/);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = match ? match[1] : fallbackName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function isUnreachable(err) {
@@ -149,30 +219,24 @@ export async function downloadReport(requestBody) {
   }
   let response;
   try {
-    response = await fetch("/api/report", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-    });
+    response = await fetch(
+      "/api/report",
+      withAuth({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      }),
+    );
   } catch {
     offline = true;
     throw new Error("The PDF report is rendered by the backend, which is not running.");
   }
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || response.statusText || "Could not build the report");
+    throw serverError(data, response);
   }
 
-  const blob = await response.blob();
-  const match = (response.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/);
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = match ? match[1] : "biomarkher2-report.pdf";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  saveBlob(await response.blob(), response.headers.get("Content-Disposition"), "biomarkher2-report.pdf");
   return true;
 }
 

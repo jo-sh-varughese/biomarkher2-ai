@@ -2,9 +2,9 @@ name: tests
 
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   pytest:
@@ -23,12 +23,41 @@ jobs:
           # torch/torchvision are deliberately not in requirements.txt --
           # installed from the CPU wheel index, same two-step install
           # CONTRIBUTING.md documents, because this project runs CPU-only by
-          # design (see PROJECT_PLAN.md). torchvision provides the ResNet18
-          # encoder models/unet_seg.py imports (adopted in Phase 5) -- omitting
-          # it here made every test that imports models/ fail collection with
-          # ModuleNotFoundError, passing locally only because a dev .venv had
-          # it installed by hand.
+          # design (see PROJECT_PLAN.md). torchvision provides the ResNet
+          # encoders models/unet_seg.py imports -- omitting it made every test
+          # that imports models/ fail collection with ModuleNotFoundError,
+          # passing locally only because a dev .venv had it installed by hand.
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
       - name: Run tests
         run: pytest -q
+
+  docker:
+    # The deployment artifact: build the image from a clean checkout (the React
+    # portal is built inside it) and prove the server and every dependency it
+    # loads at start-up are present. Model checkpoints are mounted at run time
+    # (docs/DEPLOYMENT.md), so the container itself is not started here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t biomarkher2:ci .
+
+      - name: Server code and dependencies import inside the image
+        run: |
+          docker run --rm --entrypoint python biomarkher2:ci -c "
+          import app.server, app.analysis, app.report, app.decision, app.explain, app.review_record
+          import wsi.analysis, wsi.tumour, wsi.reader, wsi.report, wsi.server_routes
+          import training.v2_engine, evaluation.safety_gate
+          import openslide, torch, torchvision, sklearn, skimage, reportlab
+          import pathlib
+          assert pathlib.Path('ui/dist/index.html').is_file(), 'portal was not built into the image'
+          print('openslide', openslide.__library_version__, '| torch', torch.__version__)
+          "
+
+      - name: Image runs as a non-root user
+        run: test "$(docker run --rm --entrypoint id biomarkher2:ci -u)" != "0"
+
+      - name: Server --help starts without crashing
+        run: docker run --rm biomarkher2:ci --help > /dev/null

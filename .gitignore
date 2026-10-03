@@ -11,3 +11,4 @@ configs/paths.yaml
 *.log
 *.aux
 *.egg-info/
+dist/

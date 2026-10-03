@@ -1,23 +1,29 @@
 import { NavLink } from "react-router-dom";
 import Icon from "./Icon.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
+import { useAuth } from "../state/AuthContext.jsx";
 import { runName } from "../lib/format.js";
 import { useT } from "../i18n/I18nContext.jsx";
 
 const NAV = [
   { to: "/overview", icon: "grid", key: "nav.overview" },
   { to: "/analysis", icon: "scan", key: "nav.analysis" },
+  { to: "/slides", icon: "layers", key: "nav.slides" },
+  { to: "/review", icon: "stethoscope", key: "review.nav" },
   { to: "/cases", icon: "clipboard", key: "nav.cases", badge: "reviews" },
   { to: "/model", icon: "layers", key: "nav.model" },
 ];
 
 const SECONDARY = [{ to: "/method", icon: "book", key: "nav.method" }];
 
+const ADMIN = [{ to: "/admin", icon: "shield", key: "admin.navConsole", badge: "pending" }];
+
 export default function Sidebar({ open, collapsed, onClose }) {
   const { context, reviews } = usePortal();
+  const { can, pendingRequests } = useAuth();
   const t = useT();
   const provenance = context?.provenance;
-  const counts = { reviews: reviews.length };
+  const counts = { reviews: reviews.length, pending: pendingRequests };
 
   const item = (entry, secondary = false) => {
     const count = entry.badge ? counts[entry.badge] : 0;
@@ -39,7 +45,9 @@ export default function Sidebar({ open, collapsed, onClose }) {
           {collapsed && count ? <span className="nav__pip" /> : null}
         </span>
         <span className="nav__text">{t(entry.key)}</span>
-        {!collapsed && count ? <span className="count">{count}</span> : null}
+        {!collapsed && count ? (
+          <span className={`count${entry.badge === "pending" ? " count--warn" : ""}`}>{count}</span>
+        ) : null}
       </NavLink>
     );
   };
@@ -70,6 +78,19 @@ export default function Sidebar({ open, collapsed, onClose }) {
               <div className="nav__label">{t("nav.reference")}</div>
             )}
             {SECONDARY.map((entry) => item(entry, true))}
+
+            {/* Administrators only. The server refuses /api/admin to anyone
+                else; leaving the link out keeps it from being a dead end. */}
+            {can("admin") ? (
+              <>
+                {collapsed ? (
+                  <hr className="nav__rule" />
+                ) : (
+                  <div className="nav__label">{t("admin.navLabel")}</div>
+                )}
+                {ADMIN.map((entry) => item(entry, true))}
+              </>
+            ) : null}
           </nav>
 
           <div className="sidebar__spacer" />
@@ -96,15 +117,23 @@ export default function Sidebar({ open, collapsed, onClose }) {
                   <span className="pulse-dot" data-tone={context?.demo ? "warn" : "ok"} />
                   {t(context?.demo ? "common.demoData" : "common.modelOnline")}
                 </dt>
-                <dd>{provenance ? t("common.epochShort", { n: provenance.epoch }) : "—"}</dd>
+              </div>
+              {/* Two models answer on the Field analysis page: the pre-score
+                  (multi-task U-Net) and the stain map. Name both, or the
+                  panel reads as if the stain map produced the pre-score. */}
+              <div className="rail-status__row">
+                <dt>{t("common.prescoreModel")}</dt>
+                <dd title={context?.prescore_model?.checkpoint}>
+                  {context?.prescore_model
+                    ? `${context.prescore_model.encoder ?? ""} · ${t("common.epochShort", { n: context.prescore_model.epoch })}`
+                    : "—"}
+                </dd>
               </div>
               <div className="rail-status__row">
-                <dt>{t("common.run")}</dt>
-                <dd title={provenance?.run}>{provenance?.run ? runName(provenance.run) : "—"}</dd>
-              </div>
-              <div className="rail-status__row">
-                <dt>{t("common.archShort")}</dt>
-                <dd>{provenance?.architecture?.toUpperCase() ?? "—"}</dd>
+                <dt>{t("common.stainModel")}</dt>
+                <dd title={provenance?.run}>
+                  {provenance?.run ? `${runName(provenance.run)} · ${t("common.epochShort", { n: provenance.epoch })}` : "—"}
+                </dd>
               </div>
             </dl>
           )}

@@ -148,7 +148,16 @@ def estimate_macenko_stain_matrix(
     # The two stains span a plane; find it by eigendecomposition, then take
     # the extreme angles within that plane as the stain directions.
     _, eigenvectors = np.linalg.eigh(np.cov(strong.T))
-    plane = eigenvectors[:, [2, 1]]
+    plane = eigenvectors[:, [2, 1]].copy()
+    # eigh's eigenvector signs are arbitrary. If the principal axis comes out
+    # pointing away from the data, every projected angle lands near +/-pi,
+    # the percentiles below straddle the wrap-around, and both "extremes"
+    # collapse onto nearly the same direction (H.DAB cosine ~1.0 -- which
+    # happened on 19 of 24 real HER2_IHC_40X patches before this line).
+    # Orient each axis so the data projects positively onto it.
+    for axis in range(2):
+        if (strong @ plane[:, axis]).mean() < 0:
+            plane[:, axis] *= -1
     projected = strong @ plane
     angles = np.arctan2(projected[:, 1], projected[:, 0])
     low, high = np.percentile(angles, alpha), np.percentile(angles, 100 - alpha)
@@ -156,10 +165,12 @@ def estimate_macenko_stain_matrix(
     second = plane @ np.array([np.cos(high), np.sin(high)])
     first, second = np.abs(first), np.abs(second)
 
-    # Order the pair so haematoxylin comes first. Haematoxylin is blue-
-    # dominant, DAB is red/brown-dominant, so comparing the R-vs-B balance
-    # separates them without needing a reference.
-    if (first[0] - first[2]) > (second[0] - second[2]):
+    # Order the pair so haematoxylin comes first. These are ABSORBANCE
+    # directions: haematoxylin looks blue because it absorbs red (Ruifrok
+    # OD 0.65, 0.70, 0.29 -- R > B), DAB looks brown because it absorbs blue
+    # (0.27, 0.57, 0.78 -- B > R). So the vector with the larger R-minus-B
+    # absorbance is haematoxylin.
+    if (first[0] - first[2]) < (second[0] - second[2]):
         first, second = second, first
     try:
         return build_stain_matrix(first, second)

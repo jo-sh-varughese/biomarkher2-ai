@@ -1,0 +1,12 @@
+base: v2_smoke_cpu.yaml
+run_name: fewshot_smoke_cpu
+fewshot:
+  checkpoint: artifacts/v2/smoke_cpu/best.pt
+  label_free_dab_scale: 1.91
+  dab_scales: [1.91, 2.75]
+  budgets: {tiny: [1, 1, 1, 1]}
+  seeds: [0]
+  steps: 2
+  bags_each: 1
+  lr: 5.0e-5
+  limit_per_class: 1

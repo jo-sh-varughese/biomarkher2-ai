@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import Icon from "./Icon.jsx";
 import { ScoreBadge } from "./Badges.jsx";
-import { useAuth } from "../state/AuthContext.jsx";
+import { avatarStyle, jobTitle, useAuth } from "../state/AuthContext.jsx";
 import { useTheme } from "../state/ThemeContext.jsx";
-import { avatarStyle } from "../state/AuthContext.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
 import { initials, relativeTime, shortId } from "../lib/format.js";
 import { LANGS, useI18n } from "../i18n/I18nContext.jsx";
@@ -24,15 +23,30 @@ const TITLE_KEYS = {
   "/overview": "nav.overview",
   "/analysis": "nav.analysis",
   "/cases": "nav.cases",
+  "/slides": "nav.slides",
+  "/review": "review.nav",
   "/model": "nav.model",
   "/method": "nav.method",
   "/profile": "profile.title",
+  "/admin": "admin.nav.overview",
+  "/admin/users": "admin.nav.users",
+  "/admin/sessions": "admin.nav.sessions",
+  "/admin/audit": "admin.nav.audit",
+  "/admin/settings": "admin.nav.settings",
+  "/admin/system": "admin.nav.system",
 };
+
+/* The page name for the breadcrumb: /admin/users/usr_... is still Users. */
+function titleKey(pathname) {
+  if (TITLE_KEYS[pathname]) return TITLE_KEYS[pathname];
+  const parent = pathname.split("/").slice(0, 3).join("/");
+  return TITLE_KEYS[parent] ?? "nav.portal";
+}
 
 export default function Topbar({ onOpenNav, onToggleRail, railCollapsed }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user, signOut, can, pendingRequests } = useAuth();
   const { resolved, toggle } = useTheme();
   const { t, lang, setLang, locale } = useI18n();
   const { reviews, context } = usePortal();
@@ -119,11 +133,11 @@ export default function Topbar({ onOpenNav, onToggleRail, railCollapsed }) {
       </button>
 
       <div className="topbar__crumbs">
-        <span>{t("nav.portal")}</span>
+        <span>{t(pathname.startsWith("/admin") ? "admin.navLabel" : "nav.portal")}</span>
         <span className="sep">
           <Icon name="chevronRight" size={13} />
         </span>
-        <b>{t(TITLE_KEYS[pathname] ?? "nav.portal")}</b>
+        <b>{t(titleKey(pathname))}</b>
       </div>
 
       <div className="topbar__search">
@@ -215,7 +229,7 @@ export default function Topbar({ onOpenNav, onToggleRail, railCollapsed }) {
             <span style={{ textAlign: "left" }}>
               <span className="user-chip__name">{user?.name}</span>
               <br />
-              <span className="user-chip__role">{t(user?.roleKey ?? "demo.role")}</span>
+              <span className="user-chip__role">{jobTitle(user, t)}</span>
             </span>
           </button>
 
@@ -224,9 +238,16 @@ export default function Topbar({ onOpenNav, onToggleRail, railCollapsed }) {
               <div className="menu__head">
                 <div style={{ fontWeight: 700, fontSize: "0.8125rem" }}>{user?.name}</div>
                 <div className="tiny muted">{user?.email}</div>
-                <div className="tiny muted" style={{ marginTop: 4 }}>
-                  {t("topbar.registration", { id: user?.registration })}
-                </div>
+                {user?.registration ? (
+                  <div className="tiny muted" style={{ marginTop: 4 }}>
+                    {t("topbar.registration", { id: user.registration })}
+                  </div>
+                ) : null}
+                {user?.role ? (
+                  <div style={{ marginTop: 8 }}>
+                    <span className={`role-badge role-badge--${user.role}`}>{t(`roles.${user.role}`)}</span>
+                  </div>
+                ) : null}
               </div>
               <Link to="/profile" className="menu__item" role="menuitem" onClick={() => setMenuOpen(false)}>
                 <Icon name="user" size={16} /> {t("topbar.profile")}
@@ -239,6 +260,12 @@ export default function Topbar({ onOpenNav, onToggleRail, railCollapsed }) {
               >
                 <Icon name="settings" size={16} /> {t("topbar.preferences")}
               </Link>
+              {can("admin") ? (
+                <Link to="/admin" className="menu__item" role="menuitem" onClick={() => setMenuOpen(false)}>
+                  <Icon name="shield" size={16} /> {t("admin.navConsole")}
+                  {pendingRequests ? <span className="count count--warn menu__value">{pendingRequests}</span> : null}
+                </Link>
+              ) : null}
 
               {/* Language sits in the menu as well as in the top bar. The bar
                   toggle is the fast path for someone who already knows it is

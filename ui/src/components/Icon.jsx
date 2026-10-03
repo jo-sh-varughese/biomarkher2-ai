@@ -3,6 +3,27 @@
    pulling in an icon package (and without a second network request). */
 
 const PATHS = {
+  plus: <path d="M12 5v14M5 12h14" />,
+  minus: <path d="M5 12h14" />,
+  maximize: (
+    <>
+      <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+    </>
+  ),
+  printer: (
+    <>
+      <path d="M7 9V3.5h10V9" />
+      <rect x="3.5" y="9" width="17" height="8" rx="2" />
+      <path d="M7 14.5h10V21H7Z" />
+    </>
+  ),
+  stethoscope: (
+    <>
+      <path d="M6 3.5v5a4 4 0 0 0 8 0v-5" />
+      <path d="M10 12.5v2a5 5 0 0 0 10 0v-1.5" />
+      <circle cx="20" cy="11" r="2" />
+    </>
+  ),
   logo: (
     <>
       <path d="M12 3.2 4.6 7.1v6.2c0 4.2 3.1 7.1 7.4 8.5 4.3-1.4 7.4-4.3 7.4-8.5V7.1Z" />
@@ -203,6 +224,101 @@ const PATHS = {
     <>
       <path d="M10.6 6.2A8.9 8.9 0 0 1 12 6c6 0 9.5 6 9.5 6a17 17 0 0 1-3 3.7M6.4 7.8A17 17 0 0 0 2.5 12S6 18 12 18a8.8 8.8 0 0 0 3.4-.66" />
       <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2M3 3l18 18" />
+    </>
+  ),
+  more: (
+    <>
+      <circle cx="5.5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="18.5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    </>
+  ),
+  copy: (
+    <>
+      <rect x="8.5" y="8.5" width="12" height="12" rx="2.4" />
+      <path d="M15.5 8.5V6A2.5 2.5 0 0 0 13 3.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5" />
+    </>
+  ),
+  users: (
+    <>
+      <circle cx="9" cy="8" r="3.4" />
+      <path d="M2.8 19.8a6.3 6.3 0 0 1 12.4 0" />
+      <path d="M15.6 4.9a3.4 3.4 0 0 1 0 6.3M17.6 14.3a6.3 6.3 0 0 1 3.6 5.5" />
+    </>
+  ),
+  userPlus: (
+    <>
+      <circle cx="10" cy="8" r="3.6" />
+      <path d="M3 20.2a7.1 7.1 0 0 1 12.6-4.4" />
+      <path d="M19 14.5v6M16 17.5h6" />
+    </>
+  ),
+  userCheck: (
+    <>
+      <circle cx="10" cy="8" r="3.6" />
+      <path d="M3 20.2a7.1 7.1 0 0 1 12.2-4.9" />
+      <path d="m15.8 18.2 2 2 4-4.2" />
+    </>
+  ),
+  key: (
+    <>
+      <circle cx="8" cy="15.5" r="4.2" />
+      <path d="m11 12.5 8.5-8.5M16.5 7l2.8 2.8M14.3 9.2l2.1 2.1" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M4 6.5h16M9.5 6.5V4.8A1.3 1.3 0 0 1 10.8 3.5h2.4a1.3 1.3 0 0 1 1.3 1.3v1.7" />
+      <path d="M6.2 6.5 7 19a2 2 0 0 0 2 1.8h6a2 2 0 0 0 2-1.8l.8-12.5M10 11v5.5M14 11v5.5" />
+    </>
+  ),
+  ban: (
+    <>
+      <circle cx="12" cy="12" r="8.6" />
+      <path d="m6 6 12 12" />
+    </>
+  ),
+  unlock: (
+    <>
+      <rect x="4.5" y="10" width="15" height="10.5" rx="2.4" />
+      <path d="M8 10V7.5a4 4 0 0 1 7.6-1.8" />
+    </>
+  ),
+  monitor: (
+    <>
+      <rect x="2.8" y="4" width="18.4" height="12.4" rx="2.2" />
+      <path d="M8.5 20.5h7M12 16.4v4.1" />
+    </>
+  ),
+  smartphone: (
+    <>
+      <rect x="6.5" y="2.8" width="11" height="18.4" rx="2.4" />
+      <path d="M11 17.8h2" />
+    </>
+  ),
+  server: (
+    <>
+      <rect x="3.5" y="3.5" width="17" height="7" rx="2" />
+      <rect x="3.5" y="13.5" width="17" height="7" rx="2" />
+      <path d="M7.5 7h.01M7.5 17h.01" />
+    </>
+  ),
+  database: (
+    <>
+      <ellipse cx="12" cy="5.8" rx="7.5" ry="2.8" />
+      <path d="M4.5 5.8v12.4c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V5.8M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8" />
+    </>
+  ),
+  megaphone: (
+    <>
+      <path d="M3.5 10.2v3.6a1.5 1.5 0 0 0 1.5 1.5h2.2l6.8 4V4.7l-6.8 4H5a1.5 1.5 0 0 0-1.5 1.5Z" />
+      <path d="M7.2 15.3 8.4 20M18 9a4.2 4.2 0 0 1 0 6" />
+    </>
+  ),
+  login: (
+    <>
+      <path d="M13.5 4.5H17A2.5 2.5 0 0 1 19.5 7v10a2.5 2.5 0 0 1-2.5 2.5h-3.5" />
+      <path d="M9 15.5 12.5 12 9 8.5M12.5 12H3.5" />
     </>
   ),
 };

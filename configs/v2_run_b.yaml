@@ -1,0 +1,6 @@
+# Run B: our data + BCI's train split. BCI test becomes a SEEN site (new
+# images, known hospital) -- reported as in-domain, not unseen.
+base: v2_base.yaml
+run_name: run_b
+data: {train_sites: [her2_ihc_40x, bci]}
+train: {epochs: 16, bags_per_epoch: 5000, max_minutes: 70}

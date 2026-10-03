@@ -17,9 +17,10 @@
    ==========================================================================*/
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import Icon from "../components/Icon.jsx";
 import AnnotationLayer from "../components/AnnotationLayer.jsx";
+import ZoomViewer from "../components/ZoomViewer.jsx";
 import { CompareBars, Donut, HeatLegend, StackBar } from "../components/charts/Charts.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
 import { useAuth } from "../state/AuthContext.jsx";
@@ -29,19 +30,20 @@ import {
   downloadReport,
   readFileAsDataURL,
   saveAnnotation,
-  submitReview,
 } from "../lib/api.js";
 import {
   classForLabel,
   dateTime,
   dominantClass,
-  isCannotAssess,
   LABEL_ORDER,
   pct,
   shortId,
   signed,
 } from "../lib/format.js";
 import { useI18n } from "../i18n/I18nContext.jsx";
+import PrescorePanel from "../components/PrescorePanel.jsx";
+import ExplainPanel from "../components/ExplainPanel.jsx";
+import DecisionPanel from "../components/DecisionPanel.jsx";
 import { resolveCaveats } from "../i18n/caveats.js";
 
 /* The panels the server may return, in the order they should be offered.
@@ -56,13 +58,21 @@ const VIEWS = [
   { key: "heatmap", hasNote: true },
   { key: "baseline", hasNote: true },
   { key: "ambiguity", hasNote: true },
+  { key: "cells", hasNote: true },
+  { key: "evidence", hasNote: true },
+  { key: "regions", hasNote: true },
 ];
 
 export default function Analysis() {
-  const { context, analysis, setAnalysis, lastRequest, setLastRequest, recordReview } = usePortal();
-  const { user } = useAuth();
+  const { context, analysis, setAnalysis, lastRequest, setLastRequest, setReviewTarget } = usePortal();
+  const navigate = useNavigate();
+  const { user, can } = useAuth();
   const toast = useToast();
   const { t, locale } = useI18n();
+  // A viewer can analyse and export but never record a score or mark a
+  // region; the server refuses both for that role, so the controls say so
+  // up front instead of failing on submit.
+  const canAnnotate = can("annotate");
 
   const [patchId, setPatchId] = useState("");
   const [file, setFile] = useState(null);
@@ -75,12 +85,10 @@ export default function Analysis() {
   // on the image could never scroll a phone's page and a click could never
   // open the enlarged view.
   const [annotating, setAnnotating] = useState(false);
-  const [open, setOpen] = useState({ input: true, key: true, supporting: true, signoff: true });
-
-  const [score, setScore] = useState("");
-  const [agrees, setAgrees] = useState(false);
-  const [notes, setNotes] = useState("");
-  const [saving, setSaving] = useState(false);
+  // The result is the AI pre-score + cell evidence panel; the stain-area
+  // measurements support it and start folded so they are not read as a second
+  // answer (a user saw "1+" here beside an AI "3+", 2026-10-02).
+  const [open, setOpen] = useState({ input: true, key: false, supporting: false });
 
   const dialogRef = useRef(null);
   const [zoomed, setZoomed] = useState(null);
@@ -107,6 +115,17 @@ export default function Analysis() {
 
   const sample = context?.samples?.find((s) => s.id === patchId);
   const classes = context?.classes ?? [];
+
+  // The analysis survives navigation (it lives in PortalContext) but this
+  // page's focus did not: coming back showed "—" and 0.0% in the stained-area
+  // box. Restore the default focus whenever there is an analysis without one.
+  useEffect(() => {
+    if (!analysis || focusName || !classes.length) return;
+    const labeled = analysis.dataset_label ? classForLabel(classes, analysis.dataset_label) : null;
+    const dominant = labeled ? null : dominantClass(analysis.model_percentages);
+    const next = labeled ?? (dominant ? classes.find((c) => c.name === dominant[0]) : null);
+    if (next) setFocusName(next.name);
+  }, [analysis, focusName, classes]);
 
   const availableViews = useMemo(
     () =>
@@ -149,9 +168,6 @@ export default function Analysis() {
       setView(nextFocus && data.isolate?.[nextFocus] ? "isolate" : "model");
       setCompare(false);
       setAnnotating(false);
-      setScore("");
-      setAgrees(false);
-      setNotes("");
       if (data.demo) {
         toast.info(t("toast.demoTitle"), t("toast.demoBody"));
       } else {
@@ -164,48 +180,45 @@ export default function Analysis() {
     }
   }, [file, patchId, classes, setAnalysis, setLastRequest, toast, t]);
 
-  /* ---------------------------------------------------------- sign-off --- */
+  /* --------------------------------------------------- new analysis --- */
 
-  const saveReview = async (event) => {
-    event.preventDefault();
+  const newAnalysis = () => {
+    setAnalysis(null);
+    setLastRequest(null);
+    setFile(null);
+    setFocusName(null);
+    setAnnotating(false);
+    setCompare(false);
+    setOpen((o) => ({ ...o, input: true }));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const showView = (key) => {
+    if (!analysis?.images?.[key]) return;
+    setView(key);
+    setCompare(false);
+    document.querySelector(".viewer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  /* ----------------------------------------------------------- review --- */
+
+  const openReview = () => {
     if (!analysis) return;
-    if (!score) {
-      toast.error(t("toast.selectTitle"), t("toast.selectBody"));
-      return;
-    }
-    setSaving(true);
-    try {
-      const payload = {
-        patch_id: analysis.patch_id,
-        score,
-        agrees,
-        reviewer: user.name,
-        notes,
-        measurements: {
-          model: analysis.model_percentages,
-          baseline: analysis.baseline_percentages,
-          tissue_percent: analysis.tissue_percent,
-        },
-      };
-      const result = await submitReview(payload);
-      recordReview({
-        patch_id: analysis.patch_id,
-        score,
-        agrees,
-        reviewer: user.name,
-        notes,
-        dataset_label: analysis.dataset_label ?? sample?.folder_label ?? null,
+    setReviewTarget({
+      kind: "field",
+      id: analysis.patch_id,
+      label: analysis.display_name || analysis.patch_id,
+      image: analysis.images?.original,
+      ai_prescore: analysis.ai_prescore,
+      cell_evidence: analysis.cell_evidence,
+      guidance: analysis.guidance,
+      measurements: {
+        model: analysis.model_percentages,
+        baseline: analysis.baseline_percentages,
         tissue_percent: analysis.tissue_percent,
-      });
-      toast.ok(
-        t("toast.recordedTitle"),
-        result.demo ? t("toast.recordedDemo") : t("toast.recordedLive", { log: result.log }),
-      );
-    } catch (err) {
-      toast.error(t("toast.recordFailed"), err.message || String(err));
-    } finally {
-      setSaving(false);
-    }
+      },
+    });
+    navigate("/review");
   };
 
   /* -------------------------------------------------------- annotate --- */
@@ -327,7 +340,20 @@ export default function Analysis() {
         </div>
       </div>
 
-      <div className="study">
+      {analysis ? (
+        <section className="card current-field" aria-live="polite">
+          <span className="current-field__label">{t("analysis.current")}</span>
+          <b className="mono" title={analysis.patch_id}>{analysis.display_name || shortId(analysis.patch_id)}</b>
+          {analysis.dataset_label ? (
+            <span className="badge badge--outline">{t("analysis.sourceLabel", { label: analysis.dataset_label })}</span>
+          ) : null}
+          <button type="button" className="btn btn--sm current-field__new" onClick={newAnalysis}>
+            <Icon name="refresh" size={14} /> {t("analysis.another")}
+          </button>
+        </section>
+      ) : null}
+
+      <div className={`study${analysis ? "" : " study--empty"}`}>
         {/* ------------------------------------------------- review rail --- */}
         <div className="study__rail">
           <section className="card" style={{ padding: "4px 18px" }}>
@@ -426,14 +452,14 @@ export default function Analysis() {
                           style={{ "--pick-color": c?.color }}
                           onClick={() => focusOn(c?.name ?? null)}
                         >
-                          {label}
+                          {t(`analysis.intensityNames.${label}`)}
                         </button>
                       );
                     })}
                   </div>
 
                   <div className="key-result__value">
-                    <b style={{ "--mark": focusClass?.color }}>{focusLabel ?? "—"}</b>
+                    <b style={{ "--mark": focusClass?.color }}>{focusLabel ? t(`analysis.intensityNames.${focusLabel}`) : "—"}</b>
                     <span>{t("analysis.ofTissue", { pct: pct(focusPercent) })}</span>
                   </div>
 
@@ -453,8 +479,16 @@ export default function Analysis() {
                 </div>
 
                 <div style={{ display: "grid", gap: 10 }}>
+                  {/* StackBar scales its segments to fill the bar, so the model's
+                      unclassified tissue must be a segment of its own -- left out,
+                      every class was drawn larger than its share of the tissue. */}
                   <StackBar
-                    segments={rows.map((r) => ({ label: r.label, value: r.model, color: r.color }))}
+                    segments={[
+                      ...rows.map((r) => ({ label: r.label, value: r.model, color: r.color })),
+                      ...(analysis.model_unclassified_percent
+                        ? [{ label: t("analysis.unclassified"), value: analysis.model_unclassified_percent, color: "var(--line)" }]
+                        : []),
+                    ]}
                   />
                   <div className="legend legend--plain">
                     {rows.map((r) => (
@@ -463,6 +497,12 @@ export default function Analysis() {
                         {r.label} <b className="num">{pct(r.model)}</b>
                       </span>
                     ))}
+                    {analysis.model_unclassified_percent ? (
+                      <span>
+                        <i style={{ background: "var(--line)" }} />
+                        {t("analysis.unclassified")} <b className="num">{pct(analysis.model_unclassified_percent)}</b>
+                      </span>
+                    ) : null}
                   </div>
                 </div>
 
@@ -531,69 +571,18 @@ export default function Analysis() {
               </Section>
             ) : null}
 
-            {/* --- sign-off --- */}
-            {analysis ? (
-              <Section id="signoff" title={t("analysis.signoff")} open={open.signoff} onToggle={toggleSection}>
-                <form onSubmit={saveReview} style={{ display: "grid", gap: 14 }}>
-                  <div className="field">
-                    <span className="field-label">{t("analysis.yourAssessment")}</span>
-                    <div className="score-picker">
-                      {(context?.review_choices ?? []).map((choice) => {
-                        const cannot = isCannotAssess(choice);
-                        return (
-                          <label key={choice} className="score-opt">
-                            <input
-                              type="radio"
-                              name="score"
-                              value={choice}
-                              checked={score === choice}
-                              onChange={() => setScore(choice)}
-                            />
-                            <b>{cannot ? "—" : choice}</b>
-                            {cannot ? <span>{t("analysis.cannotAssess")}</span> : null}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  <label className="check">
-                    <input type="checkbox" checked={agrees} onChange={(e) => setAgrees(e.target.checked)} />
-                    {t("analysis.agrees")}
-                  </label>
-
-                  <div className="field">
-                    <label htmlFor="notes">{t("analysis.notesLabel")}</label>
-                    <textarea
-                      id="notes"
-                      className="textarea"
-                      rows={3}
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder={t("analysis.notesPlaceholder")}
-                    />
-                  </div>
-
-                  <div className="tiny muted">
-                    {t("analysis.signingAs")} <b>{user.name}</b> · {user.registration}
-                  </div>
-
-                  <button
-                    type="submit"
-                    className="btn btn--primary btn--block"
-                    disabled={saving}
-                    {...(saving ? { "data-busy": "" } : {})}
-                  >
-                    <Icon name="check" size={16} /> {t("analysis.record")}
-                  </button>
-                </form>
-              </Section>
-            ) : null}
           </section>
         </div>
 
         {/* ------------------------------------------------------ imagery --- */}
         <div className="study__main">
+          {analysis ? <PrescorePanel analysis={analysis} /> : null}
+          {analysis?.cell_evidence?.decision_support ? (
+            <DecisionPanel decision={analysis.cell_evidence.decision_support} guidance={analysis.guidance} />
+          ) : null}
+          {analysis?.cell_evidence?.explanation ? (
+            <ExplainPanel explanation={analysis.cell_evidence.explanation} onShowView={showView} />
+          ) : null}
           <section className="card viewer">
             {analysis ? (
               <>
@@ -623,8 +612,8 @@ export default function Analysis() {
                       className={`tool tool--keep${annotating ? " is-on" : ""}`}
                       onClick={() => setAnnotating((v) => !v)}
                       aria-pressed={annotating}
-                      disabled={compare}
-                      title={t("analysis.annotate.toggleTitle")}
+                      disabled={compare || !canAnnotate}
+                      title={canAnnotate ? t("analysis.annotate.toggleTitle") : t("roleGate.annotate")}
                     >
                       <Icon name="pen" size={15} />
                       <span>{t(annotating ? "analysis.annotate.done" : "analysis.annotate.toggle")}</span>
@@ -823,10 +812,27 @@ export default function Analysis() {
                         </td>
                       </tr>
                     ))}
+                    {analysis.model_unclassified_percent ? (
+                      <tr className="row-muted">
+                        <td data-label={t("table.intensityClass")}>
+                          <span className="swatch" style={{ background: "var(--line)" }} />
+                          {t("analysis.unclassified")}
+                        </td>
+                        <td className="num" data-label={t("table.model")}>{pct(analysis.model_unclassified_percent, 2)}</td>
+                        <td className="num" data-label={t("table.baseline")}>{pct(0, 2)}</td>
+                        <td className="num" data-label={t("table.difference")} />
+                        <td data-hide-sm="" />
+                      </tr>
+                    ) : null}
                   </tbody>
                 </table>
               </div>
 
+              {analysis.model_unclassified_percent ? (
+                <p className="hint" style={{ marginTop: 10 }}>
+                  {t("analysis.unclassifiedNote", { pct: pct(analysis.model_unclassified_percent) })}
+                </p>
+              ) : null}
               <p className="hint" style={{ marginTop: 14 }}>
                 {t("analysis.summary", { pct: pct(analysis.disagreement_percent) })}
                 {analysis.conformal?.available
@@ -897,6 +903,40 @@ export default function Analysis() {
         </div>
       </div>
 
+      {/* --------------------------------------------------- action bar --- */}
+      {analysis ? (
+        <div className="actionbar" role="toolbar" aria-label={t("review.title")}>
+          <div className="actionbar__info">
+            {analysis.ai_prescore?.shown && analysis.ai_prescore?.prescore ? (
+              <>
+                <span className="tiny muted">{t("prescore.label")}</span>{" "}
+                <b>IHC {analysis.ai_prescore.prescore.category}</b>
+              </>
+            ) : null}
+            {analysis.cell_evidence ? (
+              <span className="actionbar__score">
+                {" "}· {t("review.cellEvidence")} IHC {analysis.cell_evidence.field_category}
+              </span>
+            ) : null}
+            {analysis.guidance?.ish ? (
+              <span className="actionbar__score"> · {t(`prescore.ish.${analysis.guidance.ish.level}`)}</span>
+            ) : null}
+          </div>
+          <div className="actionbar__buttons">
+            <button type="button" className="btn" onClick={newAnalysis}>
+              <Icon name="refresh" size={16} /> {t("analysis.newAnalysis")}
+            </button>
+            <button type="button" className="btn" onClick={exportReport} disabled={reporting}
+              {...(reporting ? { "data-busy": "" } : {})}>
+              <Icon name="download" size={16} /> {t("analysis.pdfReport")}
+            </button>
+            <button type="button" className="btn btn--primary" onClick={openReview}>
+              <Icon name="stethoscope" size={16} /> {t("review.open")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {/* ------------------------------------------------------- lightbox --- */}
       <dialog
         ref={dialogRef}
@@ -928,7 +968,7 @@ export default function Analysis() {
         </div>
         <div className="lightbox__body">
           {zoomed && analysis ? (
-            <img src={zoomed === "isolate" ? isolateImage : analysis.images[zoomed]} alt="" />
+            <ZoomViewer src={zoomed === "isolate" ? isolateImage : analysis.images[zoomed]} alt="" />
           ) : null}
         </div>
       </dialog>

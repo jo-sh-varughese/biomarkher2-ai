@@ -1,0 +1,7 @@
+# Run A: our data only. Answers "how close to 90% in-domain?" and gives the
+# first honest unseen-site number (BCI, never trained on).
+# epochs 12 -> 25 on 2026-10-02 after Run 0 measured ~140 tiles/s on the
+# RTX 4090 (about 4x the planning estimate); decided before any Run A result.
+base: v2_base.yaml
+run_name: run_a
+train: {epochs: 25}

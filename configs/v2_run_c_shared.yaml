@@ -1,0 +1,7 @@
+# Run C (shared stain space): BCI only, but every BCI image is mapped into
+# our stain space during training and validation. Tested on our holdout --
+# unseen for this model -- and compared with Run C (raw BCI), so the effect
+# of training in one shared stain space is measured on an unseen hospital.
+base: v2_run_c.yaml
+run_name: run_c_shared
+data: {train_site_norm: true}

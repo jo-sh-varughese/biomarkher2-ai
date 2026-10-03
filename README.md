@@ -3,14 +3,14 @@
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:182528,100:95531A&height=220&section=header&text=BioMarkHER2&fontSize=64&fontColor=F4E6D5&fontAlignY=36&animation=fadeIn&desc=AI-Assisted%20HER2%20IHC%20Scoring%20%E2%80%94%20Pre-scoring%2C%20Never%20Autonomous&descAlignY=58&descSize=18&descColor=E7EEEE" width="100%"/>
 
 <a href="https://github.com/jo-sh-varughese/biomarkher2-ai">
-  <img src="https://readme-typing-svg.demolab.com/?font=JetBrains+Mono&weight=600&size=20&duration=3000&pause=1200&color=95531A&center=true&vCenter=true&width=820&lines=Quantifying+HER2+staining%2C+not+guessing+at+it.;A+pathologist+always+reviews+and+confirms.;Built+for+Kottayam+Medical+College.;355+tests+enforce+that+promise." alt="typing banner" />
+  <img src="https://readme-typing-svg.demolab.com/?font=JetBrains+Mono&weight=600&size=20&duration=3000&pause=1200&color=95531A&center=true&vCenter=true&width=820&lines=Quantifying+HER2+staining%2C+not+guessing+at+it.;A+pathologist+always+reviews+and+confirms.;Built+for+Kottayam+Medical+College.;408+tests+enforce+that+promise." alt="typing banner" />
 </a>
 
 <br/>
 
 ![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-CPU--only-EE4C2C?logo=pytorch&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-355%20passing-2f6f5e?logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-408%20passing-2f6f5e?logo=pytest&logoColor=white)
 ![Status](https://img.shields.io/badge/status-active%20development-95531A)
 ![Runs on](https://img.shields.io/badge/runs%20on-CPU%20only-5b6b70)
 ![Docker](https://img.shields.io/badge/docker-packaged-2496ED?logo=docker&logoColor=white)
@@ -160,6 +160,7 @@ one.
 | 📊 | **Phase 4 · Evaluation** | Conformal prediction (stain-shift-weighted for cross-institution uncertainty), stain-variation analysis, offline ASCO/CAP 2018 mapping + Cohen's kappa, PDF reports, Docker packaging. |
 | 🏗️ | **Phase 5 · Architecture** | ResNet18-UNet (RGB + DAB optical density input) vs. SegFormer, compared head-to-head. U-Net won every class — moderate (2+) went from IoU 0.00006 to **0.589**. |
 | 🖥️ | **Review-viewer** | Local, dependency-free web app — model vs. classical baseline always side by side, mandatory human review step, PDF export. |
+| 🔐 | **Accounts & admin console** | Real sign-in (scrypt-hashed passwords, server-side sessions, CSRF tokens, lockout), three roles enforced on every API route, and an admin console for users, access requests, sessions, the audit log, settings and deployment checks. Guide: [`docs/ACCOUNTS_AND_ADMIN.md`](docs/ACCOUNTS_AND_ADMIN.md). |
 
 <br/>
 
@@ -201,10 +202,11 @@ the three-person task division: **[`PROJECT_PLAN.md`](PROJECT_PLAN.md)**.
 | Image processing | scikit-image, NumPy — colour deconvolution, tissue detection, tiling |
 | Evaluation | Conformal prediction, Cohen's kappa, ASCO/CAP 2018 mapping |
 | App | React portal (`ui/`) served by a Python standard library backend (`http.server`) — no Flask/FastAPI, no CDN at runtime |
+| Accounts | SQLite (standard library) — scrypt password hashes, server-side sessions, CSRF tokens, an audit log |
 | Reports | ReportLab (PDF export) |
 | Packaging | Docker + docker-compose |
 | Config | Plain dataclasses + YAML — no Hydra, unknown keys rejected loudly |
-| Tests | pytest — 355 tests, the project's actual specification |
+| Tests | pytest — 408 tests, the project's actual specification |
 
 <br/>
 
@@ -219,23 +221,34 @@ python -m venv .venv
 pip install -r requirements.txt
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-pytest -q                             # 355 passed
+pytest -q                             # 408 passed
 
 pip install -e .                      # registers the `biomark` command (one-off)
 biomark
 # builds ui/dist the first time (needs Node/npm), opens http://127.0.0.1:8000
+# first run: prints (and opens) a one-time link to create the administrator account
 ```
+
+Everyone then signs in with their own account: the administrator adds people from the
+**admin console** (`/admin`), with a password or an invite link, and chooses each
+person's role. Putting the portal on a network (HTTPS, `--secure-cookies`) and
+recovering from a terminal (`biomark-admin`) are covered in
+[`docs/ACCOUNTS_AND_ADMIN.md`](docs/ACCOUNTS_AND_ADMIN.md).
 
 No Node installed, or want the raw two-step version? `biomark` is just
 `npm run build` (inside `ui/`) followed by `python -m app.server --run
 artifacts/phase2_unet` — see [`ui/README.md`](ui/README.md) and
 [`app/cli.py`](app/cli.py).
 
-Or with Docker:
+Or with Docker (the image builds the portal itself; models are mounted):
 
 ```bash
+bash scripts/package_models.sh   # on the machine that has artifacts/ -> dist/biomark_models.tgz
 docker compose up --build
 ```
+
+Deploying at a hospital (models, HTTPS, site validation, backups, go-live
+checklist): [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 <br/>
 
@@ -249,10 +262,10 @@ preprocessing/    Phase 1 -- stain math, tissue detection, the classical baselin
 training/         Phase 2 -- dataset, splits, losses, the training loop
 models/           ResNet18-UNet wrapper + architecture dispatch
 evaluation/       Phase 4 -- conformal prediction, stain variation, CAP/ASCO mapping
-app/              the review-viewer frontend + PDF report export
+app/              the portal backend: analysis, accounts + admin API, PDF export
 configs/          YAML configs -- one file fully describes one run
 scripts/          CLI entry points that call into the packages above
-tests/            355 tests -- the project's actual specification
+tests/            408 tests -- the project's actual specification
 tasks/            self-contained task briefs for the three open workstreams
 artifacts/        everything a run produces (gitignored -- regenerable)
 data/             raw dataset + cached pseudo-label targets (gitignored)
@@ -268,7 +281,7 @@ data/             raw dataset + cached pseudo-label targets (gitignored)
 pytest -q
 ```
 
-355 tests, spanning every phase. A real category of them encodes the
+408 tests, spanning every phase. A real category of them encodes the
 project's framing rules as literal assertions — not just correctness checks
 — specifically so a well-intentioned future edit can't erode them quietly.
 See `IMPLEMENTATION_NOTES.md`'s "Testing philosophy".
@@ -301,7 +314,8 @@ workflow and the rules that are load-bearing rather than style preferences.
 | [`PROJECT_PLAN.md`](PROJECT_PLAN.md) | Onboarding: what this is, coverage vs. the original brief, what's left |
 | [`IMPLEMENTATION_NOTES.md`](IMPLEMENTATION_NOTES.md) | The full technical account, phase by phase, with the *why* behind every choice |
 | [`PHASE2.md`](PHASE2.md) | Training: the resolution diagnosis, the split problem, run-by-run numbers |
-| [`PHASE4.md`](PHASE4.md) | Conformal prediction, stain variation, CAP/ASCO mapping, Docker |
+| [`PHASE4.md`](PHASE4.md) | The four objectives: stain variation, cross-institution conformal prediction, ASCO/CAP agreement, the deployed system — final status 2026-10-03 |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Deploying the system: Docker, models, HTTPS, site validation, backups |
 | [`PHASE5.md`](PHASE5.md) | The SegFormer vs. U-Net comparison, decision, and why |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branch/PR workflow |
 | [`app/README.md`](app/README.md) | The review-viewer, developer-facing |

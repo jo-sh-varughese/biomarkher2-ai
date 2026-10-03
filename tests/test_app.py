@@ -37,6 +37,7 @@ from app.analysis import (
     to_data_uri,
 )
 from preprocessing.baseline import CLASS_NAMES, NUM_CLASSES
+from tests.portal_client import Running
 
 STATIC = Path(__file__).resolve().parents[1] / "app" / "static"
 
@@ -226,24 +227,99 @@ def test_prediction_covers_an_image_that_is_not_a_multiple_of_the_tile(analyzer)
     assert prediction[:, 128:].size > 0
 
 
-def test_analysis_reports_both_columns_and_never_a_score(analyzer):
+def test_analysis_reports_both_columns_and_never_a_verdict(analyzer):
     from tests.synthetic import graded_patch
 
     result = analyzer.analyze(graded_patch(size=128), patch_id="demo.png").to_dict()
 
-    assert set(result["images"]) == {"original", "tissue", "model", "baseline", "heatmap"}
+    assert set(result["images"]) == {"original", "tissue", "model", "baseline", "heatmap", "cells"}
     assert set(result["isolate"]) == set(result["model_percentages"]), (
         "isolate must offer exactly the classes model_percentages reports, no more, no less"
     )
     assert result["baseline_percentages"], "the control column is missing"
     assert result["model_percentages"]
     assert 0.0 <= result["tissue_percent"] <= 100.0
+    # Cell evidence and guidance are always present; without a pre-score model there is no pre-score.
+    assert result["cell_evidence"]["field_category"] in ("0", "1+", "2+", "3+")
+    assert result["guidance"]["basis"] == "cell evidence"
+    assert result["ai_prescore"] is None
 
-    # No field anywhere in the payload is a HER2 score.
+    # The deliberate rule (changed 2026-10-02): a GATED AI pre-score may appear under ai_prescore,
+    # but nothing is ever a verdict or diagnosis, and there is no bare top-level score field.
     flat = json.dumps(result).lower()
-    for forbidden in ('"score"', '"her2_score"', '"verdict"', '"diagnosis"'):
+    for forbidden in ('"her2_score"', '"verdict"', '"diagnosis"'):
         assert forbidden not in flat
+    assert "score" not in result
     assert result["caveats"]["not_a_score"] == NOT_A_SCORE
+
+
+class _FakeEngine:
+    """Stands in for app.prescore.PrescoreEngine without loading a 140 MB checkpoint."""
+
+    info = {"checkpoint": "fake.pt", "epoch": 1, "encoder": "resnet50", "trained_on": ["her2_ihc_40x"]}
+
+    def run(self, rgb, tissue=None):
+        from app.prescore import PrescoreResult
+
+        h, w = rgb.shape[:2]
+        return PrescoreResult(
+            probabilities={"0": 0.01, "1+": 0.03, "2+": 0.90, "3+": 0.06}, category="2+", confidence=0.90,
+            margin=0.84, runner_up="3+", borderline=False,
+            tiles=[{"row": 0, "col": 0, "category": "2+", "probabilities": {"0": 0.01, "1+": 0.03, "2+": 0.9, "3+": 0.06},
+                    "attention": 1.0, "tissue_fraction": 1.0}],
+            grid=(1, 1), heterogeneity={"regions_by_grade": {"2+": 1.0}, "grade_spread": 0, "heterogeneous": False},
+            evidence_map=np.zeros((h, w), dtype=np.float32), model=self.info)
+
+
+def _with_policy(analyzer, tmp_path, **policy):
+    analyzer.prescore_engine = _FakeEngine()
+    analyzer.site_policy = {"site": "test site", "status": "shadow_mode", "show_scores": False, "research_mode": False,
+                            "reasons": ["No local validation record for this site."], "microns_per_pixel_scale": 1.0, **policy}
+    analyzer.shadow_log = tmp_path / "shadow.jsonl"
+    return analyzer
+
+
+def test_prescore_is_withheld_and_logged_at_an_unvalidated_site(analyzer, tmp_path):
+    from tests.synthetic import graded_patch
+
+    try:
+        result = _with_policy(analyzer, tmp_path).analyze(graded_patch(size=128), patch_id="x.png").to_dict()
+        block = result["ai_prescore"]
+        assert block["available"] and not block["shown"] and "prescore" not in block
+        assert block["withheld_reasons"]
+        assert "evidence" not in result["images"] and "regions" not in result["images"]
+        assert result["guidance"]["basis"] == "cell evidence"
+        logged = [json.loads(line) for line in (tmp_path / "shadow.jsonl").read_text().splitlines()]
+        assert logged[0]["prescore"]["category"] == "2+"
+    finally:
+        analyzer.prescore_engine = None
+
+
+def test_prescore_is_shown_only_at_a_validated_site_and_always_needs_confirmation(analyzer, tmp_path):
+    from tests.synthetic import graded_patch
+
+    try:
+        result = _with_policy(analyzer, tmp_path, status="validated", show_scores=True).analyze(graded_patch(size=128)).to_dict()
+        block = result["ai_prescore"]
+        assert block["shown"] and block["validated"] and block["requires_pathologist_confirmation"] is True
+        assert block["prescore"]["category"] == "2+"
+        assert {"evidence", "regions"} <= set(result["images"])
+        assert result["guidance"]["ish"]["level"] == "required"  # ASCO/CAP: 2+ -> reflex ISH
+        assert "warning" not in block
+    finally:
+        analyzer.prescore_engine = None
+
+
+def test_research_mode_marks_every_prescore_unvalidated(analyzer, tmp_path):
+    from tests.synthetic import graded_patch
+
+    try:
+        result = _with_policy(analyzer, tmp_path, research_mode=True).analyze(graded_patch(size=128)).to_dict()
+        block = result["ai_prescore"]
+        assert block["shown"] and not block["validated"]
+        assert "RESEARCH MODE" in block["warning"]
+    finally:
+        analyzer.prescore_engine = None
 
 
 def test_model_and_baseline_share_one_tissue_denominator(analyzer):
@@ -253,6 +329,9 @@ def test_model_and_baseline_share_one_tissue_denominator(analyzer):
     result = analyzer.analyze(graded_patch(size=128)).to_dict()
     for column in ("model_percentages", "baseline_percentages"):
         total = sum(result[column].values())
+        if column == "model_percentages":
+            # the model's unclassified tissue is its own share of the same denominator
+            total += result["model_unclassified_percent"]
         assert total == pytest.approx(100.0, abs=0.5) or total == pytest.approx(0.0)
 
 
@@ -508,133 +587,90 @@ def test_an_annotation_is_recorded_with_id_and_filtered_by_patch(tmp_path):
     assert state.read_annotations("no-such-field") == []
 
 
+def _png_data_uri(size: int) -> str:
+    import base64
+    import io
+
+    from PIL import Image
+
+    from tests.synthetic import graded_patch
+
+    buffer = io.BytesIO()
+    Image.fromarray(graded_patch(size=size)).save(buffer, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
 def test_annotation_endpoint_validates_and_round_trips(tmp_path):
     """End-to-end over real HTTP, mirroring test_report_endpoint_streams_a_pdf:
     proves the route is wired to State.record_annotation with the right
     validation, not just that the validation logic works in isolation."""
-    import http.client
-    import threading
-    from http.server import ThreadingHTTPServer
-
-    from app.server import Handler, State
+    from app.server import State
 
     class FakeAnalyzer:
         provenance = {"run": "x"}
 
     state = State(FakeAnalyzer(), tmp_path / "missing", tmp_path / "reviews.jsonl")
-    Handler.state = state
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    with Running(state, role="pathologist", name="Dr A Menon") as srv:
+        def post(body):
+            response = srv.send("POST", "/api/annotations", body)
+            return response.status, response.json
 
-    def post(body):
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
-        conn.request(
-            "POST", "/api/annotations",
-            body=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        response = conn.getresponse()
-        return response.status, json.loads(response.read())
-
-    try:
         status, payload = post({
             "patch_id": "field.png", "x": 0.2, "y": 0.3, "w": 0.1, "h": 0.15,
-            "note": "check this focus", "reviewer": "AB",
+            "note": "check this focus",
+            # Whoever the body claims to be, the region is signed by the
+            # session -- the discipline /api/review enforces too.
+            "reviewer": "Someone Else",
         })
         assert status == 200
         assert payload["ok"] is True
         assert payload["annotation"]["patch_id"] == "field.png"
         assert payload["annotation"]["id"]
+        assert payload["annotation"]["reviewer"] == "Dr A Menon"
+        assert payload["annotation"]["reviewer_id"] == srv.user["id"]
         assert state.read_annotations("field.png") == [payload["annotation"]]
-
-        # No reviewer -- the same discipline /api/review already enforces.
-        status, payload = post({
-            "patch_id": "field.png", "x": 0, "y": 0, "w": 0.1, "h": 0.1, "note": "x",
-        })
-        assert status == 400
 
         # A box that does not fit inside the image.
         status, payload = post({
-            "patch_id": "field.png", "x": 0.5, "y": 0, "w": 0.9, "h": 0.1,
-            "note": "x", "reviewer": "AB",
+            "patch_id": "field.png", "x": 0.5, "y": 0, "w": 0.9, "h": 0.1, "note": "x",
         })
         assert status == 400
 
         # Neither a note nor a score -- nothing to record.
-        status, payload = post({
-            "patch_id": "field.png", "x": 0, "y": 0, "w": 0.1, "h": 0.1, "reviewer": "AB",
-        })
+        status, payload = post({"patch_id": "field.png", "x": 0, "y": 0, "w": 0.1, "h": 0.1})
         assert status == 400
 
         # An unrecognised score string.
         status, payload = post({
-            "patch_id": "field.png", "x": 0, "y": 0, "w": 0.1, "h": 0.1,
-            "score": "4+", "reviewer": "AB",
+            "patch_id": "field.png", "x": 0, "y": 0, "w": 0.1, "h": 0.1, "score": "4+",
         })
         assert status == 400
-    finally:
-        server.shutdown()
-        server.server_close()
 
 
 def test_analyze_response_includes_this_fields_saved_annotations(analyzer, tmp_path):
     """/api/analyze is what the portal actually calls to load a field, so the
     annotations it carries have to come back from there, not only from the
     lower-level State methods the two tests above exercise directly."""
-    import base64
-    import http.client
-    import io
-    import threading
-    from http.server import ThreadingHTTPServer
-
-    from PIL import Image
-
-    from app.server import Handler, State
-    from tests.synthetic import graded_patch
+    from app.server import State
 
     state = State(analyzer, Path("data/raw"), tmp_path / "reviews.jsonl")
     state.record_annotation({
         "patch_id": "demo.png", "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2,
         "note": "earlier note", "score": "", "reviewer": "AB",
     })
-    Handler.state = state
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        buffer = io.BytesIO()
-        Image.fromarray(graded_patch(size=128)).save(buffer, format="PNG")
-        data_uri = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
-
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
-        body = json.dumps({"image": data_uri, "name": "demo.png"}).encode("utf-8")
-        conn.request("POST", "/api/analyze", body=body, headers={"Content-Type": "application/json"})
-        response = conn.getresponse()
-        result = json.loads(response.read())
-
-        assert response.status == 200
-        assert [a["note"] for a in result["annotations"]] == ["earlier note"]
-    finally:
-        server.shutdown()
-        server.server_close()
+    with Running(state, role="viewer") as srv:
+        response = srv.send("POST", "/api/analyze", {"image": _png_data_uri(128), "name": "demo.png"})
+    assert response.status == 200
+    assert [a["note"] for a in response.json["annotations"]] == ["earlier note"]
 
 
 def test_analyze_endpoint_reports_the_datasets_own_label(analyzer, tmp_path):
     """dataset_label on /api/analyze's response must be the sample's own
     folder label for a patch_id request, and None for an upload -- there is
     no dataset folder behind an uploaded image to look one up in."""
-    import base64
-    import http.client
-    import io
-    import threading
-    from http.server import ThreadingHTTPServer
-
     from PIL import Image
 
-    from app.server import Handler, State
+    from app.server import State
     from tests.synthetic import graded_patch
 
     patch_root = tmp_path / "data"
@@ -642,67 +678,15 @@ def test_analyze_endpoint_reports_the_datasets_own_label(analyzer, tmp_path):
     folder.mkdir(parents=True)
     Image.fromarray(graded_patch(size=64)).save(folder / "field.png")
 
-    Handler.state = State(analyzer, patch_root, tmp_path / "reviews.jsonl")
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    state = State(analyzer, patch_root, tmp_path / "reviews.jsonl")
+    with Running(state, role="pathologist") as srv:
+        response = srv.send("POST", "/api/analyze", {"patch_id": "test/class_3+/field.png"})
+        assert response.status == 200
+        assert response.json["dataset_label"] == "3+"
 
-    def post(body):
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
-        conn.request(
-            "POST", "/api/analyze",
-            body=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        response = conn.getresponse()
-        return response.status, json.loads(response.read())
-
-    try:
-        status, result = post({"patch_id": "test/class_3+/field.png"})
-        assert status == 200
-        assert result["dataset_label"] == "3+"
-
-        buffer = io.BytesIO()
-        Image.fromarray(graded_patch(size=64)).save(buffer, format="PNG")
-        data_uri = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
-        status, result = post({"image": data_uri, "name": "uploaded.png"})
-        assert status == 200
-        assert result["dataset_label"] is None
-    finally:
-        server.shutdown()
-        server.server_close()
-
-
-class _Running:
-    """A real server on an ephemeral port for the duration of a with-block."""
-
-    def __init__(self, state):
-        self.state = state
-
-    def __enter__(self):
-        import threading
-        from http.server import ThreadingHTTPServer
-
-        from app.server import Handler
-
-        Handler.state = self.state
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        return self
-
-    def request(self, method, path, body=None):
-        import http.client
-
-        conn = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=30)
-        payload = json.dumps(body).encode("utf-8") if body is not None else None
-        conn.request(method, path, body=payload, headers={"Content-Type": "application/json"})
-        response = conn.getresponse()
-        return response.status, response.getheader("Content-Type") or "", response.read()
-
-    def __exit__(self, *exc):
-        self.server.shutdown()
-        self.server.server_close()
+        response = srv.send("POST", "/api/analyze", {"image": _png_data_uri(64), "name": "uploaded.png"})
+        assert response.status == 200
+        assert response.json["dataset_label"] is None
 
 
 def test_reviews_endpoint_serves_the_log_newest_first(tmp_path):
@@ -715,13 +699,13 @@ def test_reviews_endpoint_serves_the_log_newest_first(tmp_path):
         provenance = {"run": "artifacts/phase2_unet"}
 
     state = State(FakeAnalyzer(), tmp_path / "missing", tmp_path / "reviews.jsonl")
-    with _Running(state) as srv:
+    with Running(state, role="pathologist", name="AB") as srv:
         status, _, body = srv.request("GET", "/api/reviews")
         assert status == 200 and json.loads(body) == {"reviews": []}
 
         for patch, score, agrees in (("a.png", "2+", True), ("b.png", "cannot assess from this field", False)):
             status, _, _ = srv.request("POST", "/api/review", {
-                "patch_id": patch, "score": score, "agrees": agrees, "reviewer": "AB",
+                "patch_id": patch, "score": score, "agrees": agrees,
                 "notes": "n", "measurements": {"tissue_percent": 61.5},
             })
             assert status == 200
@@ -731,7 +715,7 @@ def test_reviews_endpoint_serves_the_log_newest_first(tmp_path):
     assert [r["patch_id"] for r in rows] == ["b.png", "a.png"]
     assert rows[1]["agrees"] is True and rows[0]["agrees"] is False
     assert rows[1]["tissue_percent"] == 61.5
-    assert all(r["at"] and r["reviewer"] == "AB" for r in rows)
+    assert all(r["at"] and r["reviewer"] == "AB" and r["reviewer_id"] == srv.user["id"] for r in rows)
 
 
 def test_file_paths_404_instead_of_falling_through_to_the_page(tmp_path):
@@ -749,7 +733,8 @@ def test_file_paths_404_instead_of_falling_through_to_the_page(tmp_path):
     (dist / "fonts" / "real.woff2").write_bytes(b"wOF2")
 
     state = State(FakeAnalyzer(), tmp_path / "missing", tmp_path / "r.jsonl", dist)
-    with _Running(state) as srv:
+    # Signed out: the portal's files and pages are public; only /api is not.
+    with Running(state, sign_in=False) as srv:
         status, _, _ = srv.request("GET", "/fonts/missing.woff2")
         assert status == 404
         status, ctype, body = srv.request("GET", "/fonts/real.woff2")
@@ -792,41 +777,13 @@ def test_report_endpoint_streams_a_pdf(analyzer, tmp_path):
     that function, with the right content type and a download-friendly
     filename header.
     """
-    import base64
-    import http.client
-    import io
-    import threading
-    from http.server import ThreadingHTTPServer
+    from app.server import State
 
-    from PIL import Image
+    state = State(analyzer, Path("data/raw"), tmp_path / "reviews.jsonl")
+    with Running(state, role="viewer") as srv:
+        response = srv.send("POST", "/api/report", {"image": _png_data_uri(128), "name": "test field"})
 
-    from app.server import Handler, State
-    from tests.synthetic import graded_patch
-
-    Handler.state = State(analyzer, Path("data/raw"), tmp_path / "reviews.jsonl")
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        buffer = io.BytesIO()
-        Image.fromarray(graded_patch(size=128)).save(buffer, format="PNG")
-        data_uri = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode(
-            "ascii"
-        )
-
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
-        body = json.dumps({"image": data_uri, "name": "test field"}).encode("utf-8")
-        conn.request(
-            "POST", "/api/report", body=body, headers={"Content-Type": "application/json"}
-        )
-        response = conn.getresponse()
-        payload = response.read()
-
-        assert response.status == 200
-        assert response.getheader("Content-Type") == "application/pdf"
-        assert "attachment" in (response.getheader("Content-Disposition") or "")
-        assert payload.startswith(b"%PDF")
-    finally:
-        server.shutdown()
-        server.server_close()
+    assert response.status == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert "attachment" in response.headers.get("content-disposition", "")
+    assert response.body.startswith(b"%PDF")

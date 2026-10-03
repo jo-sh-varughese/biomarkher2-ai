@@ -1,5 +1,142 @@
 # Phase 4 — Conformal prediction, stain variation, and CAP/ASCO mapping
 
+## Final status (2026-10-03) — read this first
+
+Everything below the line further down is the original September write-up,
+kept for history. Where it disagrees with this section, **this section is
+current**: the stain estimator was fixed on 2026-10-01 (its September numbers
+are superseded), a second institution (BCI) and a real whole slide (ACROBAT)
+are now available, the AI pre-score (v2 multi-task model) now produces the
+ASCO/CAP grade directly behind a site safety gate, and the system is
+containerized and CI-verified.
+
+| # | Objective | Status |
+|---|---|---|
+| 1 | Estimate stain variation across slides using adaptive stain-vector analysis | **Done** |
+| 2 | Stain-shift-weighted conformal prediction under cross-institution shift | **Done** (evaluated on a real second institution) |
+| 3 | Map AI predictions to ASCO/CAP HER2 score; agreement with expert ground truth | **Done** against the datasets' expert labels; local-pathologist agreement activates once reviews are recorded |
+| 4 | Complete HER2 AI system with web interface and Docker | **Done and deployment-ready** (docs/DEPLOYMENT.md); hosting site is a hospital decision |
+
+### 1. Stain variation (adaptive stain-vector analysis)
+
+Per-image Macenko stain vectors (corrected estimator: eigenvector sign and
+H/DAB order fixed 2026-10-01).
+
+* **Across institutions and within a real slide** (`scripts/stain_variation_sites.py`,
+  `artifacts/phase4/stain_variation_sites.json`; 100 images per source, 91
+  tissue regions of the slide):
+
+  | Source | H spread | DAB spread | H strength (p99) | DAB strength (p99) |
+  |---|---|---|---|---|
+  | HER2-IHC-40x (training site) | 5.6° | 8.4° | 0.61 | 0.32 |
+  | BCI (second hospital) | 2.1° | 7.8° | 0.34 | 0.31 |
+  | ACROBAT case 39 (one real whole slide, Karolinska) | 3.4° | 5.8° | 0.19 | 0.24 |
+
+  | Between sources | H angle | DAB angle | DAB strength ratio |
+  |---|---|---|---|
+  | training site vs BCI | 15.9° | 8.4° | ×0.97 |
+  | training site vs ACROBAT | 3.0° | 27.8° | ×0.76 |
+  | BCI vs ACROBAT | 14.0° | 19.5° | ×0.79 |
+
+  Stain directions differ between institutions by 3-5× the variation inside
+  one institution or inside one slide, and counterstain strength differs
+  about 3-fold. This is the cross-institution stain shift Objective 2 corrects for.
+* **Within the training dataset** (`scripts/stain_variation_report.py --per-group 100`,
+  `artifacts/phase4/stain_variation_fixed/`): between-group distance 0.196 vs
+  within-group spread 0.138 (ratio 1.42; the September run, with the buggy
+  estimator, gave 0.409 vs 0.279, ratio 1.47 — same conclusion, magnitudes
+  were inflated). Groups, not slides, and confounded with HER2 score, as
+  explained below.
+
+### 2. Stain-shift-weighted conformal prediction, cross-institution
+
+`evaluation/cross_site_conformal.py`, `scripts/conformal_cross_site.py`,
+results `artifacts/conformal_cross_site/run_{a,b}.{json,md}`. Image-level
+HER2 score (0/1+/2+/3+), expert labels, LAC score. Calibration: 951 held-out
+training-site images; tests: the other 953 (same hospital) and 338 BCI images
+(another hospital). Three thresholds: unweighted; stain-similarity (kernel)
+weighted (the project's method); likelihood-ratio weighted (Tibshirani et al.
+2019, domain classifier on stain features, cross-fitted, test labels unused).
+
+Run A never saw BCI (true cross-institution test); Run B is the deployed model
+(trained with BCI's training split).
+
+| Coverage at the other hospital (target 95%) | Run A | Run B |
+|---|---|---|
+| unweighted | 58.9% | 82.2% |
+| stain-shift weighted (kernel) | 63.6% | **91.7%** |
+| likelihood-ratio weighted | 99.7% (set size 3.9 of 4) | 99.1% (set size 3.7) |
+| calibrated on 25 local labelled cases (50 random splits) | 95.9% (set size 3.8) | **95.9% (set size 2.1)** |
+
+At the same hospital every method holds its target (e.g. Run B 93.6-94.9% at
+95%, 89.1-90.0% at 90%).
+
+What this shows:
+
+* Under real cross-institution shift, standard conformal prediction **loses
+  its guarantee** (95% promised, 59-82% delivered).
+* **Stain-shift weighting improves coverage** substantially for the deployed
+  model (82% → 92%) but does not fully restore it: part of the shift is in how
+  the institutions grade (label/concept shift), which no covariate weighting
+  can correct.
+* Likelihood-ratio weighting restores validity but, because the two
+  institutions' stains are almost perfectly separable (domain AUC 0.999,
+  effective calibration size 2), only by returning nearly every grade — the
+  correct "cannot narrow this down" answer, not a useful one.
+* **Calibrating on ~25 labelled cases from the new site restores the
+  guarantee with informative sets** for the deployed model (2.1 grades at
+  95%; at 80%, 1.3 grades and 73% single-grade answers).
+
+In the product: the AI pre-score shows a **90% conformal prediction set**
+(`app/prescore.prediction_set`, calibrated by `scripts/calibrate_prescore_sets.py`,
+stored in `artifacts/v2/run_b/prescore_sets.json`), only at the site the
+calibration was made for. A new hospital calibrates with its own cases (the
+same ones that validate the site gate).
+
+The September pixel-level results below were computed on a 52-patch smoke
+sample with the buggy stain descriptor and are superseded by this section.
+
+### 3. ASCO/CAP mapping and agreement with expert ground truth
+
+The v2 model outputs the ASCO/CAP IHC category (0/1+/2+/3+) directly, with
+HER2-low/ultralow from the cell-level ASCO/CAP rule, ISH guidance and
+decision support (docs/PRESCORING_SYSTEM.md, docs/ISH_DECISION_SUPPORT.md),
+shown only behind the site safety gate (the September "never a score" rule
+was deliberately replaced by this gated design, IMPLEMENTATION_NOTES.md).
+Agreement with the datasets' expert labels (`artifacts/v2/run_b/eval.json`):
+
+| Set | n | Accuracy | QWK |
+|---|---|---|---|
+| HER2-IHC-40x holdout (training site) | 1,904 | 92.3% | 0.975 |
+| BCI test (second hospital, training split seen) | 977 | 75.3% | 0.698 |
+| Cell-level ASCO/CAP rule, holdout | — | 72.0% | 0.844 |
+
+At a hospital never seen in training (Run A on BCI) accuracy was 48%: hence
+the safety gate (pre-score withheld until locally validated). Agreement with
+this project's own pathologists uses the Pathologist review tab
+(`artifacts/reviews.jsonl`, `scripts/evaluate_cap_agreement.py`); it has no
+real reviews yet.
+
+### 4. Complete system, web interface, Docker
+
+Web portal (accounts and admin console, field analysis, whole slides with
+tumour detection, AI pre-score with prediction sets, ISH decision support and
+explanations, pathologist review records, PDF reports); `Dockerfile`
+(multi-stage: builds the portal, non-root, health check) and
+`docker-compose.yml`; `/api/health`; `scripts/package_models.sh` (model bundle
+with SHA-256 manifest); docs/DEPLOYMENT.md. CI builds the image from a clean
+checkout and checks that the server and every dependency load inside it
+(`.github/workflows/tests.yml`, job `docker`). Two defects found and fixed on
+2026-10-03: the image omitted `wsi/` (the server would not start) and
+`requirements.txt` omitted OpenSlide.
+
+Still outside this project's control: real pathologist reviews, and the
+Kottayam slides.
+
+---
+
+## Original write-up (2026-09, superseded where it conflicts with the section above)
+
 Status: **software complete and runnable for everything that does not
 require data this project does not have.** One objective — evaluating
 agreement with *expert* ground truth — is built, tested, and wired to a real
@@ -38,6 +175,17 @@ Tests: `tests/test_stain_shift.py`, `test_stain_variation.py`,
 ## Where each objective actually stands
 
 ### 1. Estimate stain variation across slides using adaptive stain-vector analysis
+
+> **Stale numbers (2026-10-01).** The variation figures and the conformal
+> stain-shift weights below were computed with a `estimate_macenko_stain_matrix`
+> that had two bugs, both fixed while building the cross-site BCI test (see
+> `docs/CROSS_SITE_STAIN_NORMALIZATION.md`): the principal eigenvector's sign
+> was never oriented, so on most real patches the haematoxylin and DAB vectors
+> collapsed onto the same direction (cosine ~1.0 on 19 of 24 sampled patches),
+> and the H/DAB row order was inverted. The descriptor was therefore mostly
+> measuring noise in a near-degenerate estimate. Re-run
+> `scripts/stain_variation_report.py` (and conformal calibration, if the
+> weighted results are to be quoted) before citing these numbers again.
 
 **Done, with the same substitution every other Phase 4 result makes
 explicit.** `preprocessing/stains.py` already estimated a Macenko stain

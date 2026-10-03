@@ -17,6 +17,10 @@ export function PortalProvider({ children }) {
 
   const [analysis, setAnalysis] = useState(null);
   const [lastRequest, setLastRequest] = useState(null);
+  // What the Pathologist review tab is reviewing: a field analysis or a whole
+  // slide, with the AI result and evidence the pathologist saw. Set by the
+  // "Open pathologist review" button on those pages.
+  const [reviewTarget, setReviewTarget] = useState(null);
   // Starts empty, not seeded: until the log has been read there is nothing
   // true to show, and a flash of demo rows on a live portal is the exact
   // confusion this state exists to prevent.
@@ -76,6 +80,9 @@ export function PortalProvider({ children }) {
       setAnalysis,
       lastRequest,
       setLastRequest,
+      reviewTarget,
+      setReviewTarget,
+      reloadReviews: loadReviews,
       reviews,
       reviewsDemo,
       reviewsLoaded,
@@ -84,7 +91,8 @@ export function PortalProvider({ children }) {
       // context or the analysis on screen came from the demo module.
       isDemo: Boolean(context?.demo || analysis?.demo),
     }),
-    [context, contextError, loading, reload, analysis, lastRequest, reviews, reviewsDemo, reviewsLoaded, recordReview],
+    [context, contextError, loading, reload, analysis, lastRequest, reviewTarget, loadReviews, reviews, reviewsDemo,
+      reviewsLoaded, recordReview],
   );
 
   return <PortalContext.Provider value={value}>{children}</PortalContext.Provider>;

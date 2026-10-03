@@ -41,7 +41,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision.models import ResNet18_Weights, resnet18
+from torchvision.models import ResNet18_Weights, ResNet50_Weights, resnet18, resnet50
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
@@ -55,6 +55,71 @@ IMAGENET_STD = (0.229, 0.224, 0.225)
 DAB_NORMALIZE_SCALE = 1.0
 
 IN_CHANNELS = 4
+
+# Per-stage output channels (stride 2, 4, 8, 16, 32) for each supported encoder.
+ENCODER_CHANNELS = {
+    "resnet18": (64, 64, 128, 256, 512),
+    "resnet50": (64, 256, 512, 1024, 2048),
+}
+DECODER_CHANNELS = (256, 128, 64, 64)
+
+# Pathology self-supervised ResNet-50 weights from Kang et al. (Lunit),
+# "Benchmarking Self-Supervised Learning on Diverse Pathology Datasets",
+# CVPR 2023 -- github.com/lunit-io/benchmark-ssl-pathology. Pretrained on
+# H&E, not IHC, but still tissue: a far closer start than ImageNet.
+LUNIT_WEIGHTS = {
+    "lunit_bt": "bt_rn50_ep200.torch",
+    "lunit_mocov2": "mocov2_rn50_ep200.torch",
+    "lunit_swav": "swav_rn50_ep200.torch",
+}
+LUNIT_URL = "https://github.com/lunit-io/benchmark-ssl-pathology/releases/download/pretrained-weights/"
+# The RGB statistics those weights were trained with (from the same repo).
+LUNIT_MEAN = (0.70322989, 0.53606487, 0.66096631)
+LUNIT_STD = (0.21716536, 0.26081574, 0.20723464)
+
+
+def rgb_statistics(encoder_weights: str | None) -> tuple[tuple, tuple]:
+    """The (mean, std) an encoder's pretrained weights expect on RGB in 0..1."""
+    if encoder_weights and str(encoder_weights).startswith("lunit"):
+        return LUNIT_MEAN, LUNIT_STD
+    return IMAGENET_MEAN, IMAGENET_STD
+
+
+def _load_lunit(backbone: nn.Module, name: str, weights_dir: str | None) -> None:
+    from pathlib import Path
+
+    if name not in LUNIT_WEIGHTS:
+        raise ValueError(f"Unknown Lunit weights {name!r}; expected one of {sorted(LUNIT_WEIGHTS)}")
+    directory = Path(weights_dir or "data/weights")
+    path = directory / LUNIT_WEIGHTS[name]
+    if not path.is_file():
+        directory.mkdir(parents=True, exist_ok=True)
+        torch.hub.download_url_to_file(LUNIT_URL + LUNIT_WEIGHTS[name], str(path))
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    result = backbone.load_state_dict(state, strict=False)
+    unexpected = [k for k in result.unexpected_keys]
+    missing = [k for k in result.missing_keys if not k.startswith("fc.")]
+    if unexpected or missing:
+        raise RuntimeError(f"Lunit weights did not match ResNet-50: missing={missing[:5]} unexpected={unexpected[:5]}")
+
+
+def build_backbone(encoder: str, encoder_weights: str | None, weights_dir: str | None = None) -> nn.Module:
+    """A torchvision ResNet with the requested initialization.
+
+    ``encoder_weights``: None (random), "imagenet", or one of LUNIT_WEIGHTS.
+    """
+    if encoder == "resnet18":
+        if encoder_weights not in (None, "imagenet"):
+            raise ValueError("resnet18 supports only ImageNet or random weights")
+        return resnet18(weights=ResNet18_Weights.IMAGENET1K_V1 if encoder_weights else None)
+    if encoder == "resnet50":
+        if encoder_weights == "imagenet":
+            return resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+        backbone = resnet50(weights=None)
+        if encoder_weights:
+            _load_lunit(backbone, encoder_weights, weights_dir)
+        return backbone
+    raise ValueError(f"Unknown encoder {encoder!r}; expected one of {sorted(ENCODER_CHANNELS)}")
 
 
 def normalize_batch(pixels: torch.Tensor) -> torch.Tensor:
@@ -137,22 +202,40 @@ class ResNetUNet(nn.Module):
     comparison this tradeoff was decided from.
     """
 
-    def __init__(self, num_classes: int, pretrained: bool = True) -> None:
+    def __init__(
+        self,
+        num_classes: int,
+        pretrained: bool = True,
+        encoder: str = "resnet18",
+        encoder_weights: str | None = "default",
+        weights_dir: str | None = None,
+        in_channels: int = IN_CHANNELS,
+    ) -> None:
         super().__init__()
-        weights = ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
-        backbone = resnet18(weights=weights)
+        # "default" keeps the original behaviour: ImageNet when pretrained,
+        # random otherwise. Parameter names are identical for resnet18, so
+        # every checkpoint trained before the encoder became configurable
+        # still loads.
+        if encoder_weights == "default":
+            encoder_weights = "imagenet" if pretrained else None
+        backbone = build_backbone(encoder, encoder_weights, weights_dir)
+        self.encoder_name = encoder
+        self.encoder_channels = ENCODER_CHANNELS[encoder]
 
         original_conv1 = backbone.conv1
-        self.conv1 = nn.Conv2d(IN_CHANNELS, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.in_channels = in_channels
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
         with torch.no_grad():
-            self.conv1.weight[:, :3] = original_conv1.weight
-            # The fourth (DAB) channel starts as the mean of the pretrained
-            # RGB filters, not zeros or a random init -- zeros would make the
-            # new channel contribute nothing at the start of training, and a
-            # random init would discard the one piece of pretrained
-            # structure (edge/blob detectors) a physically related channel
-            # can plausibly reuse.
-            self.conv1.weight[:, 3:4] = original_conv1.weight.mean(dim=1, keepdim=True)
+            self.conv1.weight[:, :3] = original_conv1.weight[:, : min(3, in_channels)]
+        if in_channels > 3:
+            with torch.no_grad():
+                # The fourth (DAB) channel starts as the mean of the pretrained
+                # RGB filters, not zeros or a random init -- zeros would make the
+                # new channel contribute nothing at the start of training, and a
+                # random init would discard the one piece of pretrained
+                # structure (edge/blob detectors) a physically related channel
+                # can plausibly reuse.
+                self.conv1.weight[:, 3:4] = original_conv1.weight.mean(dim=1, keepdim=True)
 
         self.bn1 = backbone.bn1
         self.relu = backbone.relu
@@ -162,11 +245,13 @@ class ResNetUNet(nn.Module):
         self.layer3 = backbone.layer3
         self.layer4 = backbone.layer4
 
-        self.up4 = _UpBlock(512, 256, 256)
-        self.up3 = _UpBlock(256, 128, 128)
-        self.up2 = _UpBlock(128, 64, 64)
-        self.up1 = _UpBlock(64, 64, 64)
-        self.classifier = nn.Conv2d(64, num_classes, kernel_size=1)
+        c0, c1, c2, c3, c4 = self.encoder_channels
+        d4, d3, d2, d1 = DECODER_CHANNELS
+        self.up4 = _UpBlock(c4, c3, d4)
+        self.up3 = _UpBlock(d4, c2, d3)
+        self.up2 = _UpBlock(d3, c1, d2)
+        self.up1 = _UpBlock(d2, c0, d1)
+        self.classifier = nn.Conv2d(d1, num_classes, kernel_size=1)
         # Deliberately no learned stage at the input's own full resolution --
         # see the class docstring's "STOPPING AT STRIDE 2" note. The final
         # step from stride 2 to stride 1 is a plain, non-learned upsample of
@@ -174,10 +259,14 @@ class ResNetUNet(nn.Module):
         # reached input resolution the same way, by bilinear upsample of
         # its own lower-resolution logits.
 
-    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
-        if pixel_values.ndim != 4 or pixel_values.shape[1] != IN_CHANNELS:
+    def forward(self, pixel_values: torch.Tensor, return_features: bool = False, with_seg: bool = True):
+        """Segmentation logits; with ``return_features`` also the stride-32 map.
+
+        ``with_seg=False`` skips the decoder entirely (score-only inference).
+        """
+        if pixel_values.ndim != 4 or pixel_values.shape[1] != self.in_channels:
             raise ValueError(
-                f"Expected an Nx4xHxW batch, got {tuple(pixel_values.shape)}"
+                f"Expected an Nx{self.in_channels}xHxW batch, got {tuple(pixel_values.shape)}"
             )
         height, width = pixel_values.shape[-2:]
 
@@ -186,6 +275,9 @@ class ResNetUNet(nn.Module):
         s2 = self.layer2(s1)                                # stride 8,  128ch
         s3 = self.layer3(s2)                                # stride 16, 256ch
         s4 = self.layer4(s3)                                # stride 32, 512ch
+
+        if not with_seg:
+            return (None, s4) if return_features else None
 
         x = self.up4(s4, s3)   # stride 16
         x = self.up3(x, s2)    # stride 8
@@ -197,6 +289,8 @@ class ResNetUNet(nn.Module):
             logits = F.interpolate(
                 logits, size=(height, width), mode="bilinear", align_corners=False
             )
+        if return_features:
+            return logits, s4
         return logits
 
 

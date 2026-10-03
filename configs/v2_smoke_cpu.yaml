@@ -1,0 +1,8 @@
+# Local CPU smoke test: tiny everything, ResNet-18 with no download.
+# Proves the full train -> validate -> checkpoint -> evaluate path works.
+base: v2_base.yaml
+run_name: smoke_cpu
+data: {bci_root: data/external/bci, train_sites: [her2_ihc_40x, bci], limit_per_class: 2}
+model: {encoder: resnet18, encoder_weights: null}
+train: {require_gpu: false, epochs: 1, bags_per_epoch: 4, batch_bags: 2, workers: 0, val_limit_per_class: 1, log_every: 1, max_minutes: 30}
+eval: {limit_per_class: 1, batch: 1}

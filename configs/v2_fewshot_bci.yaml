@@ -1,0 +1,15 @@
+# New-hospital onboarding on BCI with Kottayam's budget: 25 labelled cases.
+# Settings fixed before any run (scripts/fewshot_v2.py).
+base: v2_base.yaml
+run_name: fewshot_bci
+fewshot:
+  checkpoint: artifacts/v2/run_a/best.pt
+  label_free_dab_scale: 1.91          # from the site fingerprint (artifacts/fingerprints/bci)
+  dab_scales: [1.5, 1.91, 2.15, 2.75, 3.5]
+  budgets:
+    balanced_25: [6, 6, 6, 7]         # 0, 1+, 2+, 3+
+    kottayam_mix_25: [9, 4, 2, 10]    # Kottayam's known score proportions scaled to 25
+  seeds: [0, 1, 2, 3, 4]              # 25 cases is small: report the spread over five draws
+  steps: 300
+  bags_each: 2                        # per step: 2 new-site bags + 2 replay bags from our data
+  lr: 5.0e-5

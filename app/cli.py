@@ -15,9 +15,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
-import webbrowser
 from pathlib import Path
-from threading import Timer
 
 from app.server import UI_DIST_DEFAULT, build_argparser, serve
 
@@ -83,13 +81,10 @@ def main(argv: list[str] | None = None) -> int:
     else:
         _build_ui(ui_dist, force=args.rebuild_ui)
 
-    if not args.no_browser:
-        url = f"http://{args.host}:{args.port}/"
-        # Fired once, after a short delay so it lands after the "review
-        # viewer -> ..." banner rather than racing the still-loading model.
-        Timer(1.0, lambda: webbrowser.open(url)).start()
-
-    return serve(args)
+    # serve() opens the browser itself: on a fresh install it opens the
+    # one-time setup link for the first administrator rather than the portal,
+    # and only serve() knows that link.
+    return serve(args, open_browser=not args.no_browser)
 
 
 if __name__ == "__main__":

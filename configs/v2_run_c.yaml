@@ -1,0 +1,7 @@
+# Run C: BCI train only, tested on our holdout -- the reverse unseen-site
+# direction. No segmentation labels exist for BCI, so the decoder is off.
+base: v2_base.yaml
+run_name: run_c
+data: {train_sites: [bci]}
+loss: {seg_weight: 0.0}
+train: {epochs: 10, bags_per_epoch: 3000, max_minutes: 90}

@@ -1,7 +1,8 @@
-# Binds the viewer to 127.0.0.1 on the HOST only, matching app/server.py's
-# own "local demonstration only" stance even though the container's network
-# is otherwise isolated by Docker. Change the port mapping only alongside
-# adding real authentication in front of the service -- see Dockerfile.
+# Binds the portal to 127.0.0.1 on the HOST only. Everyone signs in with
+# their own account (the first run prints a one-time setup link in
+# `docker compose logs`). To serve other machines, put an HTTPS reverse proxy
+# in front, then change the port mapping and turn on the two settings under
+# `environment` -- see docs/ACCOUNTS_AND_ADMIN.md.
 services:
   biomarkher2:
     build: .
@@ -10,7 +11,22 @@ services:
     volumes:
       # Read-only: the viewer only ever reads sample patches from here.
       - ./data:/app/data:ro
-      # Read-write: checkpoints are read, and artifacts/reviews.jsonl is
-      # appended to every time a pathologist records a review.
+      # Read-write: checkpoints are read, artifacts/reviews.jsonl is
+      # appended to every time a pathologist records a review, and the
+      # account database (artifacts/biomark.db) lives here too -- so accounts
+      # survive rebuilds. Back this directory up.
       - ./artifacts:/app/artifacts
-    command: ["--run", "artifacts/phase2_unet", "--patch-root", "data/raw"]
+    environment:
+      # Behind an HTTPS reverse proxy, turn both on:
+      # BIOMARK_SECURE_COOKIES: "1"   # session cookie marked Secure, HSTS sent
+      # BIOMARK_TRUST_PROXY: "1"      # audit log records the client's address
+      BIOMARK_DB: artifacts/biomark.db
+    restart: unless-stopped
+    command: ["--run", "artifacts/phase2_unet", "--patch-root", "data/raw",
+              "--prescore-run", "artifacts/v2/run_b/best.pt",
+              "--slide-root", "data/slides", "--tumour-model", "artifacts/tumour/best.pt",
+              # Name the hospital this server analyses for. A site other than the
+              # validated training site starts with the AI pre-score WITHHELD
+              # (shadow mode) until a local validation record is added -- see
+              # docs/DEPLOYMENT.md, "Site validation".
+              "--site-name", "${BIOMARK_SITE_NAME:-HER2-IHC-40x (training site, UMMC)}"]
