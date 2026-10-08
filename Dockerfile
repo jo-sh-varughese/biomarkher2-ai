@@ -52,7 +52,7 @@ COPY models ./models
 COPY preprocessing ./preprocessing
 COPY training ./training
 COPY evaluation ./evaluation
-# wsi/: whole-slide reading, tumour detection and the /api/slides routes.
+# wsi/: whole-slide reading, exclusions (ink, control cores) and the /api/slides routes.
 # app/server.py imports it at start-up -- leaving it out made the container
 # exit immediately with ModuleNotFoundError (found 2026-10-03).
 COPY wsi ./wsi
@@ -88,8 +88,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
 # BIOMARK_SECURE_COOKIES=1; the accounts themselves are already enforced.
 ENTRYPOINT ["python", "-m", "app.server", "--host", "0.0.0.0"]
 # Models are read from the mounted artifacts/ (see docs/DEPLOYMENT.md for the
-# exact files): the stain map (phase2_unet), the AI pre-score (v2/run_b) and
-# the tumour segmenter (tumour/). Whole slides are read from data/slides.
-CMD ["--run", "artifacts/phase2_unet", "--patch-root", "data/raw", \
+# exact files): the stain map (phase2_unet_8epochs, the adopted 8-epoch model)
+# and the AI pre-score (v2/run_b). Whole slides are read from data/slides.
+CMD ["--run", "artifacts/phase2_unet_8epochs", "--patch-root", "data/raw", \
      "--prescore-run", "artifacts/v2/run_b/best.pt", \
-     "--slide-root", "data/slides", "--tumour-model", "artifacts/tumour/best.pt"]
+     "--slide-root", "data/slides"]

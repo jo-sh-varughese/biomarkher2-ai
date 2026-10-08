@@ -27,6 +27,7 @@ STATUSES = ["draft", "preliminary", "final"]
 
 ENUMS: dict[str, list[str]] = {
     "specimen_type": ["core biopsy", "excision", "mastectomy", "metastasis", "cytology cell block", "other"],
+    "tumour_site": ["breast", "gastric or gastro-oesophageal", "other"],
     "antibody_clone": ["4B5 (Ventana)", "HercepTest (Dako)", "CB11", "SP3", "other"],
     "fixation_ok": ["yes", "no", "unknown"],
     "cold_ischaemia_ok": ["yes", "no", "unknown"],
@@ -40,7 +41,8 @@ ENUMS: dict[str, list[str]] = {
 MULTI: dict[str, list[str]] = {
     "staining_pattern": ["circumferential", "basolateral / U-shaped", "lateral", "cytoplasmic only", "none"],
     "artefacts": ["edge artefact", "crush", "cautery", "DCIS present (excluded)", "necrosis",
-                  "poor fixation", "decalcified", "none"],
+                  "poor fixation", "decalcified", "pigment (melanin / haemosiderin)", "marking ink",
+                  "fold or bubble", "control core in field", "no invasive tumour in field", "none"],
 }
 PERCENTS = ["pct_complete_intense", "pct_complete_weak_moderate", "pct_incomplete_faint", "pct_no_staining"]
 TEXT_LIMITS = {"accession": 64, "block": 32, "patient_ref": 64, "report_comment": 4000, "internal_note": 4000,
@@ -102,6 +104,20 @@ def build_record(payload: dict[str, Any], previous: dict | None = None) -> dict:
     record.setdefault("her2_category", category_for(score, bool(record.get("ultralow"))))
     if status == "final" and score != "cannot assess from this field" and record.get("tissue_adequacy") == "inadequate":
         raise ValueError("A final score cannot be signed on tissue marked inadequate; record 'cannot assess' instead.")
+    scored = status == "final" and score != "cannot assess from this field"
+    if scored and record.get("tumour_site") not in (None, "breast"):
+        raise ValueError("This tool records breast HER2 scores (ASCO/CAP breast criteria). Gastric and other tumours use "
+                         "different HER2 criteria: record 'cannot assess' here and score it in the appropriate pathway.")
+    if scored and record.get("control_status") == "unacceptable":
+        raise ValueError("The on-slide control is marked unacceptable, so the stain run is invalid: record 'cannot assess' "
+                         "and repeat the stain.")
+    if scored and score in ("0", "1+") and ("no" in (record.get("fixation_ok"), record.get("cold_ischaemia_ok"))
+                                            or "poor fixation" in record.get("artefacts", [])
+                                            or "decalcified" in record.get("artefacts", [])):
+        raise ValueError("A negative (0/1+) result on poorly fixed, ischaemic or decalcified tissue may be falsely "
+                         "negative (ASCO/CAP): record 'cannot assess' or retest on another block or specimen.")
+    if scored and "no invasive tumour in field" in record.get("artefacts", []):
+        raise ValueError("You marked that the field has no invasive tumour: record 'cannot assess' for this field.")
     if record.get("ai_agreement") in ("disagree", "partly") and not record.get("ai_disagreement_reason"):
         raise ValueError("Say briefly why you disagree with the AI pre-score (it is how the model is audited).")
     structured = "status" in payload  # the review form; older callers send only score/agrees/notes
@@ -125,7 +141,7 @@ def build_record(payload: dict[str, Any], previous: dict | None = None) -> dict:
     if isinstance(snap, dict):
         record["ai_snapshot"] = {k: snap.get(k) for k in ("prescore", "confidence", "shown", "site", "gate_status",
                                                          "cell_category", "cells_measured", "ish_suggestion",
-                                                         "kind") if k in snap}
+                                                         "kind", "assessable", "quality_reasons") if k in snap}
     started = str(payload.get("started_at") or "")[:40]
     if started:
         record["started_at"] = started

@@ -49,11 +49,11 @@ def _composite(result: dict, which: str) -> Image.Image:
 
 
 def _meta(result: dict) -> str:
-    info, tum = result["slide"], result.get("tumour", {})
+    info, tis = result["slide"], result.get("tissue", {})
     mpp = f"{info['mpp']:.3f} um/px" if info.get("mpp") else "um/px unknown"
     return (f"Slide <b>{_escape(info['path'].replace(chr(92), '/').split('/')[-1])}</b> &middot; {info['width']}&times;{info['height']} px "
             f"&middot; {mpp} &middot; scanner {_escape(info.get('vendor', '-'))} &middot; fields analysed "
-            f"{len(result.get('fields', []))} &middot; invasive tumour {tum.get('invasive_area_mm2', 0)} mm&sup2; &middot; "
+            f"{len(result.get('fields', []))} &middot; usable tissue {tis.get('usable_area_mm2', 0)} mm&sup2; &middot; "
             f"generated {datetime.now():%Y-%m-%d %H:%M}")
 
 
@@ -84,11 +84,11 @@ def build_slide_report_pdf_bytes(result: dict) -> bytes:
         flow += decision_pages + [PageBreak()]
 
     # ---- where
-    flow.append(Paragraph("Where the tumour and the staining are", st["title"]))
+    flow.append(Paragraph("Where the fields are and what was excluded", st["title"]))
     half = CONTENT_WIDTH / 2 - 3 * mm
-    maps = Table([[Paragraph("<b>Invasive tumour map</b>", st["body"]), Paragraph("<b>Per-field grade map</b>", st["body"])],
-                  [_rl(_composite(result, "tumour_overlay"), half), _rl(_composite(result, "grade_overlay"), half)],
-                  [Paragraph("Red: invasive tumour; purple: in-situ tumour; green: healthy glands (haematoxylin-channel segmenter).", st["small"]),
+    maps = Table([[Paragraph("<b>Excluded tissue</b>", st["body"]), Paragraph("<b>Per-field grade map</b>", st["body"])],
+                  [_rl(_composite(result, "excluded_overlay"), half), _rl(_composite(result, "grade_overlay"), half)],
+                  [Paragraph("Teal: on-slide control tissue; grey: blue ink or mounting film. Both are left out of the patient's evidence.", st["small"]),
                    Paragraph("Each analysed field coloured by its grade: grey 0, yellow 1+, orange 2+, red 3+.", st["small"])]],
                  colWidths=[CONTENT_WIDTH / 2] * 2)
     maps.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
@@ -115,26 +115,24 @@ def build_slide_report_pdf_bytes(result: dict) -> bytes:
     flow.append(Paragraph("Fields, method and limitations", st["title"]))
     fields = result.get("fields") or []
     if fields:
-        data = [["Field", "Position (x, y)", "Invasive", "Cells", "AI grade", "Cell grade", "Weight"]]
+        data = [["Field", "Position (x, y)", "Tissue", "Cells", "AI grade", "Cell grade", "Weight"]]
         for f in fields:
-            data.append([str(f["index"] + 1), f"{f['x']}, {f['y']}", f"{f['invasive_fraction']:.0%}", str(f["cells"]),
+            data.append([str(f["index"] + 1), f"{f['x']}, {f['y']}", f"{f['tissue_fraction']:.0%}", str(f["cells"]),
                          f.get("prescore_category") or "-", f["cell_category"],
                          f"{f['attention']:.0%}" if f.get("attention") is not None else "-"])
         flow.append(_grid(data, [14 * mm, 38 * mm, 20 * mm, 18 * mm, 20 * mm, 22 * mm, 20 * mm]))
-    tum = result.get("tumour") or {}
-    model = tum.get("model") or {}
+    ctl = result.get("stain_control") or {}
     lines = [
-        "<b>Tumour detection</b>: a U-Net trained on TIGER's pathologist annotations of H&E breast cancer slides "
-        "(invasive tumour, in-situ tumour, healthy glands, other tissue), applied to the haematoxylin channel only so "
-        f"that DAB does not influence it. Blocks evaluated: {tum.get('evaluated_blocks', 0)} of {tum.get('total_blocks', 0)}.",
-        "<b>Fields</b>: 40x fields (about 246 um) inside invasive tumour, spread across the tumour; cell evidence counts "
-        "only cells inside invasive tumour.",
-        "<b>Slide pre-score</b>: the field model's attention pooling over every tumour tile analysed.",
+        "<b>Fields</b>: 40x fields (about 246 um) spread over the usable tissue. Tumour is <b>not segmented</b>: "
+        "stroma, in-situ carcinoma and normal ducts can fall inside a field, and ASCO/CAP scores invasive tumour only, "
+        "so the pathologist confirms that each field lies in invasive tumour.",
+        "<b>Exclusions</b>: on-slide control cores and blue ink or mounting film are detected and left out of the evidence; "
+        "they are drawn on the map above.",
+        "<b>Slide pre-score</b>: the field model's attention pooling over every tile analysed.",
     ]
-    metrics = model.get("metrics") or {}
-    if metrics:
-        lines.append(f"Tumour segmenter validation (held-out TIGER slides): invasive-tumour IoU "
-                     f"{(metrics.get('iou') or {}).get('invasive tumour', 0) or 0:.3f}, F1 {metrics.get('invasive_f1', 0):.3f}.")
+    if ctl.get("cores_found"):
+        lines.append("<b>On-slide control</b>: " + _escape(ctl.get("reason") or "measured") +
+                     (f" Strongest core DAB p90 {ctl['strongest_p90']}." if ctl.get("strongest_p90") is not None else ""))
     for line in lines:
         flow.append(Paragraph(line, st["body"]))
         flow.append(Spacer(1, 1.5 * mm))

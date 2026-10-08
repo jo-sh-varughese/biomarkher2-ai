@@ -43,7 +43,7 @@ DISAGREE_CMAP = ListedColormap(["#d62728"])
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", default="artifacts/phase2_unet")
+    parser.add_argument("--run", default="artifacts/phase2_unet_8epochs")
     parser.add_argument("--config", default="configs/training.yaml")
     parser.add_argument("--count", type=int, default=8)
     return parser.parse_args()

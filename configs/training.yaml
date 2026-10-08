@@ -38,7 +38,8 @@ loss:
   dice_weight: 0.5            # rare-class insurance; see training/losses.py
   focal_weight: 1.0           # downweights easy pixels; see training/losses.py
   focal_gamma: 2.0
-  class_weights: null         # inverse-frequency weighting is available but off
+  class_weights: null         # inverse-frequency weighting is available but off (tried, rejected: PHASE5_CLASS_WEIGHTS.md)
+  ordinal_weight: 0.0         # ordinal-distance loss: tried, rejected (PHASE5_ORDINAL.md)
   ignore_index: -100
   label_smoothing: 0.0
   dice_smooth: 1.0
@@ -46,7 +47,7 @@ loss:
 optim:
   learning_rate: 1.0e-4       # not deeply tuned -- see PHASE5.md
   weight_decay: 0.01
-  epochs: 4
+  epochs: 8                   # adopted 2026-09-22 (PHASE5_8EPOCHS.md); the 4-epoch baseline is configs/training_baseline_4epochs.yaml
   batch_size: 2               # 512x512 on CPU
   grad_accum_steps: 4         # effective batch 8
   warmup_fraction: 0.05
@@ -55,7 +56,11 @@ optim:
 
 data:
   patch_root: data/raw
-  cache_root: data/cache/pseudo_labels_40x
+  # The original 3,526-tile pool, not pseudo_labels_40x itself: that directory gained 3,662
+  # tiles on 2026-09-17 and training samples its 200 patches from whatever is on disk, so it
+  # would draw a different sample (see IMPLEMENTATION_NOTES.md). Built by
+  # scripts/subset_pseudo_label_cache.py; reproduces the baseline's sample exactly.
+  cache_root: data/cache/pseudo_labels_40x_orig
   # These cap SOURCE PATCHES, not training tiles. At downsample: 1 each 1024
   # patch yields four 512 tiles, so 200 patches is ~800 tiles. The cap is
   # applied to patches and only then expanded, which is what keeps tiles of
@@ -74,5 +79,5 @@ data:
   max_holdout_patches: 200
   augment: true               # flips and 90-degree rotations only
 
-output_dir: artifacts/phase2_unet
+output_dir: artifacts/phase2_unet_8epochs
 seed: 20260805

@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import Icon from "../components/Icon.jsx";
 import { ConcordBadge, ScoreBadge } from "../components/Badges.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
-import { dateTime, initials, isCannotAssess, pct, shortId } from "../lib/format.js";
+import { dateTime, initials, isCannotAssess, shortId } from "../lib/format.js";
 import { useI18n } from "../i18n/I18nContext.jsx";
 
 /* A seeded demo row carries a string key; a row the pathologist actually
@@ -116,7 +116,6 @@ export default function Cases() {
                   <th scope="col">{t("cases.statusCol")}</th>
                   <th scope="col">ISH</th>
                   <th scope="col">{t("table.datasetLabel")}</th>
-                  <th scope="col" className="num">{t("table.tissue")}</th>
                   <th scope="col">{t("table.reviewer")}</th>
                   <th scope="col">{t("table.concordant")}</th>
                   <th scope="col">{t("table.notes")}</th>
@@ -141,9 +140,6 @@ export default function Cases() {
                     </td>
                     <td className="muted" data-label="ISH">{r.ish_decision ?? "—"}</td>
                     <td className="muted" data-label={t("table.datasetLabel")}>{r.dataset_label ?? "—"}</td>
-                    <td className="num" data-label={t("table.tissue")}>
-                      {r.tissue_percent != null ? pct(r.tissue_percent) : "—"}
-                    </td>
                     <td data-label={t("table.reviewer")}>
                       <span className="who">
                         <span className="avatar avatar--sm">{initials(r.reviewer)}</span>
@@ -153,8 +149,8 @@ export default function Cases() {
                     <td data-label={t("table.concordant")}>
                       <ConcordBadge agrees={r.agrees} t={t} />
                     </td>
-                    <td className="muted" style={{ maxWidth: 260 }} data-label={t("table.notes")} data-block="">
-                      {noteOf(r, t) || <span style={{ opacity: 0.45 }}>—</span>}
+                    <td className="muted cases__note" data-label={t("table.notes")} data-block="" title={noteOf(r, t)}>
+                      <span className="clamp2">{noteOf(r, t) || <span style={{ opacity: 0.45 }}>—</span>}</span>
                     </td>
                     <td className="muted tiny" style={{ whiteSpace: "nowrap" }} data-label={t("table.recorded")}>
                       {dateTime(r.at, locale)}

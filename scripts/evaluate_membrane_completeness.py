@@ -1,6 +1,6 @@
 """Exploratory membrane-completeness analysis against a trained checkpoint.
 
-    python scripts/evaluate_membrane_completeness.py --run artifacts/phase2_unet
+    python scripts/evaluate_membrane_completeness.py --run artifacts/phase2_unet_8epochs
 
 Offline and evaluation-only, like evaluation/cap_mapping.py: nothing under
 app/ imports it, and its output is a research measurement, not a HER2 result.
@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--run",
-        default="artifacts/phase2_unet",
+        default="artifacts/phase2_unet_8epochs",
         help="Run directory holding best.pt (default: the adopted baseline).",
     )
     parser.add_argument(

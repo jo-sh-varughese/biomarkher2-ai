@@ -192,9 +192,20 @@ export function ColumnChart({ data, height = 150, formatDay, emptyLabel }) {
         </div>
       </div>
       <div className="columns__axis" aria-hidden="true">
-        {data.map((d, i) => (
-          <span key={i}>{i % 2 === (last % 2) ? d.day.getDate() : ""}</span>
-        ))}
+        {/* Day numbers alone ("29 1 3") left the reader to guess the month;
+            the month is named on the first label and wherever it changes. */}
+        {data.map((d, i) => {
+          if (i % 2 !== last % 2) return <span key={i} />;
+          const first = i === last % 2;
+          const prev = data[i - 2]?.day;
+          const showMonth = first || (prev && prev.getMonth() !== d.day.getMonth());
+          return (
+            <span key={i}>
+              {d.day.getDate()}
+              {showMonth ? ` ${d.day.toLocaleString(undefined, { month: "short" })}` : ""}
+            </span>
+          );
+        })}
       </div>
       {total === 0 && emptyLabel ? <p className="columns__empty">{emptyLabel}</p> : null}
     </div>

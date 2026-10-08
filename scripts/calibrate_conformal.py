@@ -1,7 +1,7 @@
 """Calibrate a conformal predictor over the reserved held-out set's
 calibration half, and save the calibration artifact.
 
-    python scripts/calibrate_conformal.py --run artifacts/phase2_unet
+    python scripts/calibrate_conformal.py --run artifacts/phase2_unet_8epochs
 
 This is Phase 4's one spend of the held-out set training/splits.py reserves
 (see PHASE2.md, "The held-out set was not touched in Phase 2"). It never
@@ -44,7 +44,7 @@ from training.splits import build_splits, stratified_subsample
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", default="artifacts/phase2_unet")
+    parser.add_argument("--run", default="artifacts/phase2_unet_8epochs")
     parser.add_argument("--config", default="configs/training.yaml")
     parser.add_argument(
         "--calibration-fraction",

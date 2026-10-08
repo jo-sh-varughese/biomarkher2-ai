@@ -38,6 +38,10 @@ const live = {
   settings: () => apiRequest("/api/admin/settings"),
   updateSettings: (patch) => apiRequest("/api/admin/settings", { method: "PATCH", body: patch }),
   system: () => apiRequest("/api/admin/system"),
+  learning: () => apiRequest("/api/admin/learning"),
+  learningTrain: () => apiRequest("/api/admin/learning/train", { method: "POST", body: {} }),
+  learningVersion: (version, action) => apiRequest(`/api/admin/learning/versions/${version}/${action}`, { method: "POST", body: {} }),
+  learningRecalibrate: () => apiRequest("/api/admin/learning/recalibrate", { method: "POST", body: {} }),
   exportFile: (name, params) => {
     const paths = {
       users: "/api/admin/users.csv",
@@ -464,6 +468,18 @@ function createDemo(currentUser) {
         Object.assign(store.settings, changes);
       }
       return done({ settings: store.settings });
+    },
+    async learning() {
+      throw new Error("Learning needs the real server (it trains on this hospital's own signed cases).");
+    },
+    async learningTrain() {
+      throw new Error("Not available in the demo.");
+    },
+    async learningVersion() {
+      throw new Error("Not available in the demo.");
+    },
+    async learningRecalibrate() {
+      throw new Error("Not available in the demo.");
     },
     async system() {
       const admins = activeAdmins();

@@ -29,6 +29,31 @@ const SCALE = 40; // the interval bars show 0-40%: the 10% line is what matters
 export default function DecisionPanel({ decision, guidance }) {
   const { t } = useI18n();
   if (!decision) return null;
+  if (decision.not_assessable) {
+    return (
+      <section className="card card--pad dec" aria-labelledby="dec-title">
+        <div className="card-head">
+          <div>
+            <h2 id="dec-title">{t("prescore.notAssessableTitle")}</h2>
+            <p className="sub">{t("prescore.notAssessableBody")}</p>
+          </div>
+        </div>
+        <h3 className="dec__h">{t("decision.qc")}</h3>
+        <ul className="dec__qc">
+          {decision.qc.map((q) => {
+            const st = STATUS[q.status] ?? STATUS.info;
+            return (
+              <li key={q.check + q.detail} className={`dec__qc--${st.cls}`}>
+                <span className="dec__qcicon" aria-label={q.status}>{st.icon}</span>
+                <b>{q.check}</b>
+                <span>{q.detail}</span>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    );
+  }
   const rob = decision.robustness ?? {};
   const level = guidance?.ish?.level ?? "not_applicable";
 

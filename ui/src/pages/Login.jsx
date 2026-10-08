@@ -55,13 +55,11 @@ export default function Login() {
         extra: (
           <div className="auth__stats">
             <div>
-              <strong>4</strong>
+              <strong>0–3+</strong>
               <span>{t("login.statClasses")}</span>
             </div>
             <div>
-              {/* Measured, not aspirational: median of 48 full analyses of
-                  1024x1024 fields on the development laptop's CPU (2026-09-24). */}
-              <strong>≈7s</strong>
+              <strong>ASCO/CAP</strong>
               <span>{t("login.statSpeed")}</span>
             </div>
             <div>

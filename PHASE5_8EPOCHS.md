@@ -83,26 +83,24 @@ behaviour the class-weighting experiment showed. This is the "cheap lever"
 experiments' failure mode (reweighting the same fixed evidence more
 aggressively) never applied to it.
 
-## What adopting this means, not yet done
+## Adoption (done 2026-10-06)
 
-Per the project's own convention (`configs/training.yaml` describes "the"
-default protocol, and `artifacts/phase2_unet` is the checkpoint every other
-script — the live app, Docker's default `CMD`, both conformal scripts'
-default `--config` — points at), fully adopting this result means:
+The 8-epoch result is now the project's default:
 
-1. Setting `configs/training.yaml`'s `optim.epochs: 4` to `8`.
-2. Retraining into `artifacts/phase2_unet` itself (or otherwise repointing the
-   app/Docker/conformal defaults at `artifacts/phase2_unet_8epochs`), so the
-   checkpoint every other script loads by default is actually the 8-epoch one.
+1. `configs/training.yaml` trains for 8 epochs (and on the original 3,526-tile cache, so it
+   reproduces this run's sample) and writes to `artifacts/phase2_unet_8epochs`. The old default is
+   kept, unchanged, as `configs/training_baseline_4epochs.yaml` so the 4-epoch baseline that
+   `PHASE5*.md` compare against can still be reproduced.
+2. No retraining was needed: `artifacts/phase2_unet_8epochs` already is that checkpoint. What it
+   lacked was the pixel-level conformal calibration the viewer loads (the server rejects a
+   calibration made for a different checkpoint), so `scripts/calibrate_conformal.py --run
+   artifacts/phase2_unet_8epochs` was run, and the app, Docker `CMD`, `docker-compose.yml`,
+   `serve.bat`, `start_server.bat`, `scripts/package_models.sh` and the conformal / preview scripts now
+   default to `artifacts/phase2_unet_8epochs`. The model bundle's checksum manifest
+   (`artifacts/MODELS.sha256`) was regenerated, and the server was started on it (checkpoint epoch 6,
+   conformal calibration loaded, `/api/health` ok).
 
-Neither is done yet. Step 1 is a one-line config edit but was deliberately held
-back here so the config does not claim to reproduce a checkpoint it does not
-yet reproduce (the file at `artifacts/phase2_unet` is still the 4-epoch run).
-Step 2 is another multi-hour CPU run, held back for the same reason the
-0.42-threshold training run and the full-scale conformal run were: this
-session's machine hit its own memory-pressure limit once already, mid-run, and
-the next heavy job was deferred to a later session by request rather than run
-back-to-back on a machine that had just shown it was short on headroom.
+`artifacts/phase2_unet` (4 epochs) stays on disk as the baseline.
 
 ## Note: this uses the config machinery, no new code
 

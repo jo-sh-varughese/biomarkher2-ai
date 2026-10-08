@@ -40,7 +40,12 @@ def control_signature(rgb: np.ndarray, prep, region: tuple[int, int, int, int] |
         rgb = rgb[top:bottom, left:right]
     tissue = detect_tissue(rgb, prep.tissue)
     dab = deconvolve(rgb)[..., 1][tissue]
-    stained = dab[dab >= prep.stain.thresholds()[0]]
+    return signature_from_dab(dab[dab >= prep.stain.thresholds()[0]])
+
+
+def signature_from_dab(stained: np.ndarray) -> dict:
+    """DAB OD percentiles of already-selected DAB-stained pixels (one or several control fields pooled)."""
+    stained = np.asarray(stained, dtype=np.float64)
     if stained.size < 500:
         raise ValueError("Control region has too little DAB-stained tissue to calibrate from.")
     return {f"p{p}": float(np.percentile(stained, p)) for p in PERCENTILES} | {"stained_pixels": int(stained.size)}

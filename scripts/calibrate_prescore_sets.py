@@ -41,6 +41,7 @@ def main() -> None:
     ap.add_argument("--site", default=TRAINING_SITE)
     ap.add_argument("--cases", default=None, help="CSV with columns probs (4 space-separated), label (0-3)")
     ap.add_argument("--seed", type=int, default=20261003)
+    ap.add_argument("--head-version", default="v0", help="learned model version the cases were scored with (app/learning)")
     args = ap.parse_args()
     run = ROOT / args.run
     if args.cases:
@@ -55,7 +56,8 @@ def main() -> None:
     probs = np.array([[float(x) for x in r["probs"].split()] for r in rows])
     labels = np.array([int(r["label"]) for r in rows])
     scores = lac_scores(probs, labels)
-    out = {"site": args.site, "n_cases": int(len(labels)), "score": "LAC (1 - p)", "built": str(date.today()),
+    out = {"site": args.site, "head_version": args.head_version, "n_cases": int(len(labels)), "score": "LAC (1 - p)",
+           "built": str(date.today()),
            "checkpoint": str(Path(args.run) / "best.pt"),
            "thresholds": {str(a): round(weighted_threshold(scores, np.ones(len(scores)), 1.0, a), 6)
                           for a in (0.05, 0.1, 0.2)}}

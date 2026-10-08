@@ -1,0 +1,25 @@
+# Continual learning (app/learning/). Gates are fixed in advance: a candidate
+# version can be activated only if ALL of them pass. Change them only with a
+# written reason (docs/LEARNING.md).
+enabled: true
+store_images: true            # keep each analysed image on the server (needed to retrain the encoder later)
+root: artifacts/learning      # cases, registry and versions live here (back it up with artifacts/)
+reference_features: artifacts/learning/reference_run_b.npz   # locked reference + replay sets for the shipped model
+
+training:
+  epochs: 40
+  lr: 0.001
+  anchor: 0.01                # pull towards the version being updated
+  tile_weight: 0.5            # weight of annotation (tile) labels vs case labels
+  folds: 5                    # cross-validation for the local gate
+
+gates:
+  min_labelled_cases: 40      # signed reviews with a 0/1+/2+/3+ score
+  min_per_grade: 3
+  reference_max_accuracy_drop: 0.01   # locked training-site reference set: at most 1 point worse
+  reference_max_qwk_drop: 0.01
+  local_min_accuracy_gain: 0.02       # this site's confirmed cases (out-of-fold): at least 2 points better
+  local_max_big_error_increase: 0.0   # errors of 2+ grades must not increase
+
+calibration:
+  min_cases: 25               # signed local cases needed to recalibrate the 90% prediction sets after a new version

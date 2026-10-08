@@ -142,3 +142,9 @@ export function labelForClassName(classes, name) {
   const found = classes?.find((c) => c.name === name);
   return found ? (LABEL_ORDER[found.index - 1] ?? null) : null;
 }
+
+/* The HER2 grade colours, one set for every score shown in the portal
+   (pre-score, cell evidence, review, case log, dashboard). The stain-class
+   palette from the server is for intensity MAPS, where 1+ and 2+ are two
+   close oranges -- fine on an image, too close for a grade badge. */
+export const GRADE_COLOR = { 0: "#6e82a0", "1+": "#d9b230", "2+": "#e08214", "3+": "#c81e28" };

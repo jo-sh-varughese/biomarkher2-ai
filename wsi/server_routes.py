@@ -53,11 +53,11 @@ def routes(make):
 class SlideState:
     """Slides, open-slide cache and analysis jobs; one per server."""
 
-    def __init__(self, root: Path, analyzer, tumour_model=None, settings: SlideSettings | None = None,
+    def __init__(self, root: Path, analyzer, settings: SlideSettings | None = None,
                  mpp_override: float | None = None) -> None:
         self.root = Path(root)
         self.mpp_override = mpp_override
-        self.slide_analyzer = SlideAnalyzer(analyzer, tumour_model, settings)
+        self.slide_analyzer = SlideAnalyzer(analyzer, settings)
         self._open: dict[str, tuple[Slide, object]] = {}
         self._lock = threading.Lock()
         self._run_lock = threading.Lock()  # one slide analysis at a time

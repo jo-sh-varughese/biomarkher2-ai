@@ -12,7 +12,7 @@ import { useT } from "../i18n/I18nContext.jsx";
 
 const SPEC_KEYS = ["intendedUse", "task", "indication", "inputs", "outputs", "targets", "site"];
 const REF_KEYS = ["intendedUse", "outputs", "clones", "scanners", "inputs"];
-const LIMIT_KEYS = ["area", "two", "label", "field"];
+const LIMIT_KEYS = ["site", "label", "two", "field"];
 
 export default function ModelCard() {
   const { context } = usePortal();
@@ -115,16 +115,18 @@ export default function ModelCard() {
             </div>
             <dl className="spec-list" style={{ fontSize: "0.8125rem" }}>
               <div>
-                <dt>{t("common.run")}</dt>
-                <dd className="mono" title={p?.run}>{p?.run ? runName(p.run) : "—"}</dd>
+                <dt>{t("common.prescoreModel")}</dt>
+                <dd title={context?.prescore_model?.checkpoint}>
+                  {context?.prescore_model
+                    ? `${context.prescore_model.encoder ?? ""} multi-task U-Net · ${t("common.epochShort", { n: context.prescore_model.epoch })}`
+                    : "—"}
+                </dd>
               </div>
               <div>
-                <dt>{t("common.epoch")}</dt>
-                <dd className="mono">{p?.epoch ?? "—"}</dd>
-              </div>
-              <div>
-                <dt>{t("common.architecture")}</dt>
-                <dd className="mono">{p?.architecture?.toUpperCase() ?? "—"}</dd>
+                <dt>{t("common.stainModel")}</dt>
+                <dd title={p?.run}>
+                  {p?.run ? `${runName(p.run)} · ${p?.architecture?.toUpperCase() ?? ""} · ${t("common.epochShort", { n: p.epoch })}` : "—"}
+                </dd>
               </div>
               {p?.checkpoint_sha ? (
                 <div>

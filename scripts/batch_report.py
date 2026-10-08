@@ -13,7 +13,7 @@ else follows". write_report() checks the CSV's actual field names for this
 before writing anything, the same way tests/test_app.py checks the live
 API's actual JSON.
 
-    python scripts/batch_report.py --run-dir artifacts/phase2_unet \\
+    python scripts/batch_report.py --run-dir artifacts/phase2_unet_8epochs \\
         --input-dir data/raw/test/class_2+ --output artifacts/batch_report.csv
 """
 

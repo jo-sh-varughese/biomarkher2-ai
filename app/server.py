@@ -1,7 +1,7 @@
 """BioMarkHER2 portal server.
 
     biomark                                   # builds the portal if needed, then serves it
-    python -m app.server --run artifacts/phase2_unet
+    python -m app.server --run artifacts/phase2_unet_8epochs
 
 Then open http://127.0.0.1:8000.
 
@@ -73,6 +73,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # copy (see ui/README.md) but no longer served; the portal replaces it.
 UI_DIST_DEFAULT = REPO_ROOT / "ui" / "dist"
 MAX_UPLOAD_BYTES = 24 * 1024 * 1024
+# Concurrent field analyses allowed at once (each one uses every CPU core);
+# further requests queue rather than slow every analysis down.
+ANALYSIS_SLOTS = threading.BoundedSemaphore(int(os.environ.get("BIOMARK_ANALYSIS_SLOTS", "2")))
 SESSION_COOKIE = "bmh2_session"
 CONTENT_TYPES = {".html": "text/html; charset=utf-8",
                  ".css": "text/css; charset=utf-8",
@@ -104,7 +107,7 @@ _TOKEN_IN_URL = re.compile(r"(token=)[^&\s\"]+")
 # a review UI that forces a choice manufactures agreement it did not earn.
 REVIEW_CHOICES = ["0", "1+", "2+", "3+", "cannot assess from this field"]
 # Structured review fields passed through to the case log (app/review_record.py).
-REVIEW_DETAIL_KEYS = ("status", "version", "amends", "amend_reason", "kind", "accession", "block", "patient_ref",
+REVIEW_DETAIL_KEYS = ("case_id", "status", "version", "amends", "amend_reason", "kind", "accession", "block", "patient_ref", "tumour_site",
                       "specimen_type", "antibody_clone", "fixation_ok", "cold_ischaemia_ok", "control_status",
                       "tissue_adequacy", "invasive_cells_estimate", "her2_category", "ultralow", "pct_complete_intense",
                       "pct_complete_weak_moderate", "pct_incomplete_faint", "pct_no_staining", "heterogeneous",
@@ -155,6 +158,7 @@ class State:
         self.lock = threading.Lock()
         self.samples = self._collect_samples()
         self.slides = None  # wsi.server_routes.SlideState when --slide-root is given
+        self.learning = None  # app.learning.service.LearningService when learning is on
 
     def _collect_samples(self, per_class: int = 6) -> list[dict]:
         """A stable, reproducible handful of example patches per folder class.
@@ -359,6 +363,10 @@ ROUTES = (
     _route("GET", "/api/admin/settings", "_admin_settings", "admin"),
     _route("PATCH", "/api/admin/settings", "_admin_update_settings", "admin"),
     _route("GET", "/api/admin/system", "_admin_system", "admin"),
+    _route("GET", "/api/admin/learning", "_admin_learning", "admin"),
+    _route("POST", "/api/admin/learning/train", "_admin_learning_train", "admin"),
+    _route("POST", r"/api/admin/learning/versions/(?P<version>v\d+)/(?P<action>activate|reject)", "_admin_learning_version", "admin"),
+    _route("POST", "/api/admin/learning/recalibrate", "_admin_learning_recalibrate", "admin"),
     _route("GET", r"/api/admin/export/(?P<name>reviews|annotations)\.jsonl", "_admin_export", "admin"),
 )
 
@@ -745,6 +753,7 @@ class Handler(SlideRoutesMixin, BaseHTTPRequestHandler):
         }
 
     def _analyze(self, payload: dict) -> dict:
+        notes: list[str] = []
         if payload.get("patch_id"):
             patch_id = str(payload["patch_id"])
             rgb = self.state.read_sample(patch_id)
@@ -753,12 +762,20 @@ class Handler(SlideRoutesMixin, BaseHTTPRequestHandler):
             raw = base64.b64decode(data, validate=True)
             if len(raw) > MAX_UPLOAD_BYTES:
                 raise ValueError("Uploaded image is too large")
-            rgb = np.array(Image.open(io.BytesIO(raw)).convert("RGB"))
-            patch_id = str(payload.get("name") or "uploaded image")
+            from app.image_io import decode_upload
+
+            rgb, notes = decode_upload(raw)
+            patch_id = str(payload.get("name") or "uploaded image")[:200]
         else:
             raise ValueError("Send either patch_id or image")
-        result = self.state.analyzer.analyze(rgb, patch_id=patch_id).to_dict()
-        result["dataset_label"] = self.state.dataset_label(patch_id)
+        specimen = str(payload.get("specimen") or "breast")[:40]
+        # One analysis at a time per CPU budget: a second request waits its turn
+        # instead of two inferences thrashing the same cores.
+        with ANALYSIS_SLOTS:
+            result = self.state.analyzer.analyze(rgb, patch_id=patch_id, specimen=specimen).to_dict()
+        if notes:
+            result.setdefault("quality", {}).setdefault("notes", []).extend(notes)
+        result["dataset_label"] = self.state.dataset_label(patch_id) if payload.get("patch_id") else None
         result["annotations"] = self.state.read_annotations(patch_id)
         return result
 
@@ -795,6 +812,7 @@ class Handler(SlideRoutesMixin, BaseHTTPRequestHandler):
         record = build_record(payload, previous)
         entry = {
             "patch_id": str(payload.get("patch_id", ""))[:300],
+            "case_id": str(payload.get("case_id", ""))[:40],
             "kind": "slide" if payload.get("kind") == "slide" else "field",
             **record,
             # Kept for the case log's concordance filter and older readers:
@@ -839,9 +857,50 @@ class Handler(SlideRoutesMixin, BaseHTTPRequestHandler):
         if not note and not score:
             raise ValueError("Add a note or a score for this region")
 
-        entry = {"patch_id": patch_id, **coords, "note": note, "score": score, **self._reviewer(user)}
+        entry = {"patch_id": patch_id, "case_id": str(payload.get("case_id", ""))[:40], **coords, "note": note,
+                 "score": score, **self._reviewer(user)}
         saved = self.state.record_annotation(entry)
         return {"ok": True, "annotation": saved}
+
+    # -- continual learning (app/learning) ------------------------------------
+    def _learning(self):
+        service = getattr(self.state, "learning", None)
+        if service is None:
+            raise FileNotFoundError("Learning is not enabled on this server (no pre-score model or configs/learning.yaml).")
+        return service
+
+    def _all_annotations(self) -> list[dict]:
+        path = self.state.annotations_log
+        if not path.is_file():
+            return []
+        rows = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return rows
+
+    def _admin_learning(self, call: Call) -> dict:
+        return self._learning().status(self.state.read_reviews(), self._all_annotations())
+
+    def _admin_learning_train(self, call: Call) -> dict:
+        job = self._learning().start_training(self.state.read_reviews(), self._all_annotations(), call.user["name"])
+        self.state.auth.audit("learning.train_started", actor=call.user, ip=self._ip())
+        return {"job": job}
+
+    def _admin_learning_version(self, call: Call) -> dict:
+        service = self._learning()
+        version, action = call.params["version"], call.params["action"]
+        entry = (service.activate if action == "activate" else service.reject)(version, call.user["name"])
+        self.state.auth.audit(f"learning.version_{action}d", actor=call.user, ip=self._ip(), version=version)
+        return {"version": entry, "active_version": service.version()}
+
+    def _admin_learning_recalibrate(self, call: Call) -> dict:
+        result = self._learning().recalibrate_sets(self.state.read_reviews(), self._all_annotations(), call.user["name"])
+        self.state.auth.audit("learning.sets_recalibrated", actor=call.user, ip=self._ip(),
+                              version=result["head_version"], n_cases=result["n_cases"])
+        return {"calibration": result}
 
     # -- the admin console -------------------------------------------------
     def _admin_overview(self, call: Call) -> dict:
@@ -1053,7 +1112,7 @@ def build_argparser() -> argparse.ArgumentParser:
     """Shared by `python -m app.server` and the `biomark` command (app/cli.py)
     so both accept the same flags and print the same start-up banner."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", default="artifacts/phase2_unet",
+    parser.add_argument("--run", default="artifacts/phase2_unet_8epochs",
                         help="run directory containing best.pt")
     parser.add_argument("--config", default="configs/training.yaml")
     parser.add_argument("--preprocessing", default="configs/preprocessing.yaml")
@@ -1097,15 +1156,19 @@ def build_argparser() -> argparse.ArgumentParser:
                         help="Show pre-scores at an UNVALIDATED site, each marked as unvalidated. Never for patient care.")
     parser.add_argument("--shadow-log", default="artifacts/prescore_shadow_log.jsonl",
                         help="Where withheld pre-scores are logged for later local validation.")
+    parser.add_argument("--learning-config", default="configs/learning.yaml",
+                        help="Continual learning settings (app/learning); missing file = learning off.")
     parser.add_argument("--slide-root", default="data/slides",
                         help="Folder of whole-slide images (.svs, .ndpi, .mrxs, .tiff, ...) for the Slides page.")
     parser.add_argument("--slide-mpp", type=float, default=None,
                         help="Override microns-per-pixel for slides whose files do not record it.")
-    parser.add_argument("--tumour-model", default="artifacts/tumour/best.pt",
-                        help="Invasive-tumour segmenter (scripts/train_tumour.py); without it all tissue is analysed.")
+    parser.add_argument("--control-reference", default="configs/control_reference.json",
+                        help="Reference DAB signature of a control of the declared level (scripts/build_control_reference.py); "
+                             "used with --control-level to calibrate each slide's DAB from its on-slide control.")
+    parser.add_argument("--control-level", choices=["3+"], default=None,
+                        help="HER2 level of this laboratory's on-slide control tissue. Without it the control is measured and "
+                             "reported but never used to correct a slide.")
     parser.add_argument("--slide-max-fields", type=int, default=40, help="40x fields analysed per slide.")
-    parser.add_argument("--slide-max-tumour-blocks", type=int, default=400,
-                        help="Tumour-map blocks evaluated per slide (lower on CPU-only machines).")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
@@ -1119,8 +1182,24 @@ def build_argparser() -> argparse.ArgumentParser:
 TRAINING_SITE_MPP = 0.24
 
 
+def build_learning(args, analyzer, policy):
+    """Continual learning (app/learning): stores analysed cases; learned versions go live only by admin action."""
+    engine = getattr(analyzer, "prescore_engine", None)
+    config = Path(getattr(args, "learning_config", "configs/learning.yaml") or "")
+    if engine is None or not config.is_file():
+        return None
+    from app.learning.service import LearningService
+
+    service = LearningService(config, engine=engine, site=policy.get("site"))
+    if not service.enabled:
+        return None
+    analyzer.learning = service
+    print(f"Learning: on (active model version {service.version()}; cases stored in {service.store.root})")
+    return service
+
+
 def build_slide_state(args, analyzer):
-    """Whole-slide support: the slide folder, the tumour segmenter (optional) and analysis limits."""
+    """Whole-slide support: the slide folder, the control reference and analysis limits."""
     from wsi.analysis import SlideSettings
 
     root = Path(getattr(args, "slide_root", "data/slides"))
@@ -1130,19 +1209,21 @@ def build_slide_state(args, analyzer):
         # e.g. data/ mounted read-only in Docker: the list is simply empty
         # until slides are placed there, never a start-up crash.
         print(f"NOTE: slide folder {root} does not exist and cannot be created (read-only?); no slides listed.")
-    tumour = None
-    model_path = Path(getattr(args, "tumour_model", "") or "")
-    if model_path.is_file():
-        try:
-            from wsi.tumour import TumourSegmenter
+    settings = SlideSettings(max_fields=getattr(args, "slide_max_fields", 40))
+    reference_path = Path(getattr(args, "control_reference", "") or "")
+    analyzer.control_level = getattr(args, "control_level", None)
+    analyzer.control_reference = None
+    if analyzer.control_level:
+        if reference_path.is_file():
+            import json as _json
 
-            tumour = TumourSegmenter(model_path)
-        except Exception as exc:  # noqa: BLE001 - degrade, don't crash
-            print(f"NOTE: could not load tumour model {model_path} ({type(exc).__name__}: {exc}); all tissue will be analysed.")
-    settings = SlideSettings(max_tumour_blocks=getattr(args, "slide_max_tumour_blocks", 400),
-                             max_fields=getattr(args, "slide_max_fields", 40))
-    print(f"Slides: {root} ({'tumour model ' + str(model_path) if tumour else 'no tumour model'})")
-    return SlideState(root, analyzer, tumour, settings, getattr(args, "slide_mpp", None))
+            analyzer.control_reference = _json.loads(reference_path.read_text(encoding="utf-8"))
+        else:
+            print(f"NOTE: --control-level {analyzer.control_level} given but {reference_path} not found; "
+                  "the on-slide control will be measured, not used.")
+    print(f"Slides: {root} (tissue fields; tumour is not segmented; on-slide control "
+          f"{'used for stain calibration (' + analyzer.control_level + ')' if analyzer.control_reference else 'measured only'})")
+    return SlideState(root, analyzer, settings, getattr(args, "slide_mpp", None))
 
 
 
@@ -1205,6 +1286,7 @@ def serve(args, *, open_browser: bool = False) -> int:
     )
     Handler.state.host, Handler.state.port = args.host, args.port
     Handler.state.slides = build_slide_state(args, analyzer)
+    Handler.state.learning = build_learning(args, analyzer, policy)
     print(f"Checkpoint epoch {analyzer.checkpoint_epoch}; "
           f"{len(Handler.state.samples)} sample patches indexed.")
     if analyzer.calibrator is not None:

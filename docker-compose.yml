@@ -22,9 +22,9 @@ services:
       # BIOMARK_TRUST_PROXY: "1"      # audit log records the client's address
       BIOMARK_DB: artifacts/biomark.db
     restart: unless-stopped
-    command: ["--run", "artifacts/phase2_unet", "--patch-root", "data/raw",
+    command: ["--run", "artifacts/phase2_unet_8epochs", "--patch-root", "data/raw",
               "--prescore-run", "artifacts/v2/run_b/best.pt",
-              "--slide-root", "data/slides", "--tumour-model", "artifacts/tumour/best.pt",
+              "--slide-root", "data/slides",
               # Name the hospital this server analyses for. A site other than the
               # validated training site starts with the AI pre-score WITHHELD
               # (shadow mode) until a local validation record is added -- see

@@ -154,8 +154,21 @@ def _summary_page(a: dict, st, title: str = "HER2 IHC pre-scoring report", meta:
     flow.append(Paragraph(meta, st["small"]))
     flow.append(Spacer(1, 4 * mm))
 
+    # --- field quality: a field that cannot be scored says so first ----------
+    quality = a.get("quality") or {}
+    if quality and not quality.get("assessable", True):
+        reasons = "".join(f"<br/>&bull; {_escape(r['text'])}" for r in quality.get("reasons", []) if r.get("level") == "block")
+        flow.append(_boxed([[Paragraph("<b>NOT ASSESSABLE &mdash; no HER2 score, no AI pre-score and no ISH suggestion.</b> "
+                                       "This image cannot be scored for HER2:" + reasons, st["body"])]],
+                           background=colors.HexColor("#fbe9e7"), border=colors.HexColor("#b3261e")))
+        flow.append(Spacer(1, 4 * mm))
+    for note in (quality.get("notes") or []) if quality else []:
+        flow.append(Paragraph(f"&#9432; {_escape(note)}", st["small"]))
+
     # --- AI pre-score -------------------------------------------------------
-    if pre.get("shown") and pre.get("prescore"):
+    if quality and not quality.get("assessable", True):
+        pass
+    elif pre.get("shown") and pre.get("prescore"):
         p = pre["prescore"]
         grade_colour = GRADE_COLORS.get(p["category"], "#1f2329")
         left = [Paragraph("AI PRE-SCORE (suggestion)", st["label"]),
@@ -212,7 +225,10 @@ def _summary_page(a: dict, st, title: str = "HER2 IHC pre-scoring report", meta:
                 [str(cells.get("cells_measured", 0))] + [f"{pct.get(g, 0):.1f}%" for g in ("0", "1+", "2+", "3+")]]
         flow.append(Paragraph("Cell-level ASCO/CAP evidence", st["h"]))
         flow.append(_grid(data, [28 * mm, 22 * mm, 40 * mm, 44 * mm, 42 * mm]))
-        notes = [f"Field category by the ASCO/CAP 10% rule: <b>IHC {cells.get('field_category')}</b> -- {_escape(cells.get('rule_applied', ''))}."]
+        if cells.get("field_category"):
+            notes = [f"Field category by the ASCO/CAP 10% rule: <b>IHC {cells.get('field_category')}</b> -- {_escape(cells.get('rule_applied', ''))}."]
+        else:
+            notes = ["<b>No field category</b>: the field is not assessable, so the counts above are measurements only."]
         if cells.get("her2_low"):
             notes.append("HER2-low range (1+).")
         if cells.get("her2_ultralow"):
@@ -246,6 +262,12 @@ def _decision_page(a: dict, st) -> list:
     exp = cells.get("explanation")
     if not dec and not exp:
         return []
+    if dec and dec.get("not_assessable"):
+        rows = [["Check", "Result", "Finding"]] + [[q["check"], QC_MARK.get(q["status"], ("", ""))[0], q["detail"]]
+                                                   for q in dec.get("qc", [])]
+        return [Paragraph("Field quality", st["title"]),
+                Paragraph("Why this image cannot be scored, check by check.", st["small"]), Spacer(1, 3 * mm),
+                _grid([[Paragraph(_escape(str(c)), st["small"]) for c in r] for r in rows], [40 * mm, 18 * mm, 120 * mm])]
     flow = [Paragraph("ISH decision support and explainable AI", st["title"]),
             Paragraph("The evidence behind the suggestion, in the order the ISH decision is made. Every figure is "
                       "measured on this field; the pathologist decides.", st["small"]), Spacer(1, 2 * mm)]

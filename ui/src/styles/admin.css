@@ -195,7 +195,7 @@ fieldset.field legend { margin-bottom: 8px; }
 }
 .handoff__row--link { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .handoff__label {
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -345,7 +345,7 @@ fieldset.field legend { margin-bottom: 8px; }
   border-radius: var(--r-pill);
   background: var(--accent-soft);
   color: var(--accent-text);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -372,7 +372,7 @@ fieldset.field legend { margin-bottom: 8px; }
   gap: 5px;
   padding: 3px 9px;
   border-radius: var(--r-pill);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 700;
   white-space: nowrap;
   background: var(--surface-sunken);
@@ -440,7 +440,7 @@ fieldset.field legend { margin-bottom: 8px; }
   background: var(--surface-sunken);
   border: 1px solid var(--line);
   color: var(--text-2);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -592,7 +592,7 @@ dd.tone-warn { background: none; }
   background: var(--surface-sunken);
   min-width: 0;
 }
-.facts dt { font-size: 0.6875rem; font-weight: 700; color: var(--text-3); margin-bottom: 2px; }
+.facts dt { font-size: 0.75rem; font-weight: 700; color: var(--text-3); margin-bottom: 2px; }
 .facts dd { margin: 0; font-size: 0.8125rem; font-weight: 700; overflow-wrap: anywhere; }
 .facts dd.tone-warn { color: var(--warn); }
 @media (max-width: 520px) {
@@ -739,7 +739,7 @@ dd.tone-warn { background: none; }
   border-radius: var(--r-pill);
   background: var(--surface-sunken);
   color: var(--text-3);
-  font-size: 0.625rem;
+  font-size: 0.75rem;
   letter-spacing: 0.05em;
 }
 @media (max-width: 520px) {

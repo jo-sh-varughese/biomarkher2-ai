@@ -24,7 +24,9 @@ export default function PrescorePanel({ analysis }) {
   const guide = analysis?.guidance;
   const cells = analysis?.cell_evidence;
   if (!guide && !cells) return null;
-  const shown = pre?.shown && pre?.prescore;
+  const quality = analysis?.quality;
+  const blocked = quality && quality.assessable === false;
+  const shown = !blocked && pre?.shown && pre?.prescore;
   const p = shown ? pre.prescore : null;
   const tone = ISH_TONE[guide?.ish?.level] || ISH_TONE.not_applicable;
 
@@ -42,15 +44,34 @@ export default function PrescorePanel({ analysis }) {
         ) : null}
       </div>
 
+      {/* ------------------------------------- field quality: not assessable --- */}
+      {blocked ? (
+        <div className="prescore__blocked" role="alert">
+          <strong>{t("prescore.notAssessableTitle")}</strong>
+          <p className="hint">{t("prescore.notAssessableBody")}</p>
+          <div className="prescore__label">{t("prescore.reasons")}</div>
+          <ul>{quality.reasons.filter((r) => r.level === "block").map((r) => <li key={r.code}>{r.text}</li>)}</ul>
+          {guide?.next_steps?.length ? (
+            <>
+              <div className="prescore__label">{t("prescore.whatToDo")}</div>
+              <ul>{guide.next_steps.map((c) => <li key={c}>{c}</li>)}</ul>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+      {quality?.notes?.length ? (
+        <p className="hint">{t("prescore.qualityNotes")}: {quality.notes.join(" ")}</p>
+      ) : null}
+
       {/* ---------------------------------------------------- pre-score --- */}
-      {p ? (
+      {blocked ? null : p ? (
         <div className="prescore__hero">
           <div>
             <div className="prescore__label">{t("prescore.label")}</div>
             <div className="prescore__grade" style={{ color: GRADE_COLOR[p.category] }}>IHC {p.category}</div>
             <p className="hint">
               {t("prescore.confidence", { value: pct(p.confidence) })} ·{" "}
-              {t("prescore.runnerUp", { grade: p.runner_up, margin: pct(p.margin_to_runner_up) })}
+              {t("field.nextLikely", { grade: p.runner_up, p: pct(p.probabilities?.[p.runner_up] ?? 0) })}
             </p>
             {p.prediction_set?.available ? (
               <p className="prescore__set" title={t("prescore.setHint", { n: p.prediction_set.n_cases })}>
@@ -86,12 +107,12 @@ export default function PrescorePanel({ analysis }) {
       {pre?.warning ? <p className="prescore__warning" role="alert">{t("prescore.research")}</p> : null}
       {p ? (
         <p className="hint">
-          {t("prescore.model", { encoder: p.model?.encoder || "", epoch: p.model?.epoch ?? "" })} · {t("prescore.confirm")}
+          {t("prescore.confirm")}{p.model?.head_version ? ` · ${t("prescore.version", { v: p.model.head_version })}` : ""}
         </p>
       ) : null}
 
       {/* ----------------------------------------------------- guidance --- */}
-      {guide ? (
+      {guide && !blocked ? (
         <div className="prescore__ish" style={{ borderColor: tone.fg, background: tone.bg }}>
           <div className="prescore__ishhead">
             <strong style={{ color: tone.fg }}>{t(`prescore.ish.${guide.ish.level}`)}</strong>
@@ -116,7 +137,7 @@ export default function PrescorePanel({ analysis }) {
       ) : null}
 
       {/* ------------------------------------------------ cell evidence --- */}
-      {cells ? (
+      {cells && !blocked ? (
         <div className="prescore__cells">
           <div className="prescore__label">{t("prescore.cellsTitle")}</div>
           <p className="hint">{t("prescore.cellsSub")}</p>

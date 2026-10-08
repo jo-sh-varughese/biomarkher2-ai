@@ -1,8 +1,10 @@
-# Whole-slide analysis and invasive-tumour detection
+# Whole-slide analysis
 
-Status: built 2026-10-02, not committed. Code in `wsi/`, server routes in
-`wsi/server_routes.py`, UI in `ui/src/pages/Slides.jsx`, tests in
-`tests/test_wsi.py`.
+Status: built 2026-10-02; **revised 2026-10-06** — the invasive-tumour segmenter was
+removed (it is not one of the project's four objectives) and the on-slide
+control is now measured and, when declared, used for per-slide stain
+calibration. Code in `wsi/`, server routes in `wsi/server_routes.py`, UI in
+`ui/src/pages/Slides.jsx`, tests in `tests/test_wsi.py`.
 
 ## What it does
 
@@ -17,166 +19,116 @@ in the portal's **Slides** page, browses it at full resolution
    without it needs `--slide-mpp`.
 2. **Finds tissue** on an 8 µm/px overview (saturation + optical-density
    threshold).
-3. **Maps invasive tumour** (`wsi/tumour.py`): a ResNet-50 U-Net applied to
-   512 µm tissue blocks at 0.5 µm/px. Classes: other tissue, invasive tumour,
-   in-situ tumour (DCIS), healthy glands. If a slide has more blocks than the
-   CPU budget (`--slide-max-tumour-blocks`, default 400), a regular grid
-   sample is taken and the rest are marked **not evaluated**, never treated
-   as tumour-free.
-4. **Chooses fields**: up to `--slide-max-fields` (default 40) fields of
+3. **Excludes what is not the patient** (`wsi/artefacts.py`): blue ink and
+   mounting film (checked block by block, by colour alone: no model) and
+   **on-slide control cores** (small, compact tissue pieces standing ≥1.5 mm
+   apart from the main tissue). They are drawn on the overlay and listed in
+   the flags, never silently dropped.
+4. **Measures the control** and, if allowed, uses it (see below).
+5. **Chooses fields**: up to `--slide-max-fields` (default 40) fields of
    1024 px at 0.24 µm/px (~246 µm, the training scale of the pre-score
-   model), centred on invasive-tumour blocks and spread over the tumour.
-5. **Per field**: cell-level ASCO/CAP membrane evidence (`app/cells.py`)
-   counted **only inside invasive tumour**, since ASCO/CAP scores invasive
-   tumour cells only and DCIS/normal glands are excluded; plus the pre-score
-   model's tile embeddings and per-tile grades.
-6. **Slide level**: one AI pre-score by attention pooling over every tumour
-   tile analysed; ASCO/CAP percentages over all invasive cells measured;
-   heterogeneity across fields; the highest-weighted fields as **hotspots**
-   that the viewer zooms to on click.
-7. **Safety**: the same site gate as single fields (validated / shadow mode
+   model), spread over the usable tissue.
+6. **Per field**: cell-level ASCO/CAP membrane evidence (`app/cells.py`) and the
+   pre-score model's tile embeddings and per-tile grades.
+7. **Slide level**: one AI pre-score by attention pooling over every tile
+   analysed; ASCO/CAP percentages over all cells measured; heterogeneity
+   across fields; the highest-weighted fields as **hotspots** that the viewer
+   zooms to on click.
+8. **Safety**: the same site gate as single fields (validated / shadow mode
    / blocked). Slides scanned coarser than 0.5 µm/px (below ~20×) **never get
    a pre-score**, and their cell evidence is flagged unreliable, because
    membrane completeness cannot be judged at 10×.
-8. **Report**: `GET /api/slides/<id>/report` produces a slide PDF (overview with
-   tumour map, grade map, hotspots, cell evidence, ISH guidance).
+9. **Report**: `GET /api/slides/<id>/report` produces a slide PDF (overview with
+   the excluded-tissue and grade maps, hotspots, cell evidence, ISH guidance).
 
-## Why the tumour model sees only haematoxylin
+**Tumour is not segmented.** ASCO/CAP scores invasive tumour cells only, but
+the system does not find tumour: fields are spread over all usable tissue, so
+stroma, in-situ carcinoma and normal ducts can fall inside a field and be
+counted. Every result says so (a slide flag, the cell-evidence caveat and the
+report), and the pathologist confirms that each field lies in invasive tumour.
 
-No public dataset has invasive-tumour annotations **on HER2 IHC**. Public
-tumour annotations are on H&E (TIGER, BCSS). The tissue architecture that
-separates invasive carcinoma from stroma, DCIS and normal glands (nuclear
-crowding, gland formation, nuclear size and atypia) lives in the
-haematoxylin channel, which H&E and IHC share. So both training images (H&E)
-and slides at inference (IHC) are colour-deconvolved and **re-rendered as
-haematoxylin only** (`haematoxylin_image`). The model never sees eosin or DAB,
-so it cannot learn "brown = tumour", which would bias HER2 scoring towards
-positive. A unit test checks that adding DAB does not change the model input.
+## Using the on-slide control for stain calibration
 
-## Training data and protocol (fixed before training)
+Many HER2 slides carry a control of known score beside the patient's section.
+It went through the same antibody, chromogen timing and scanner, so how dark
+its DAB came out measures that run's staining strength directly
+(`evaluation/control_calibration.py`, simulation in
+`scripts/simulate_control_calibration.py`).
 
-* **TIGER WSIROIS tissue-cells** (AWS Open Data `tiger-training`, CC BY-NC
-  4.0): 1,879 annotated ROIs from TCGA, Radboud and Jules Bordet breast
-  cancer slides at ~0.5 µm/px. TIGER labels map to ours:
-  invasive tumour → invasive; DCIS → in-situ; healthy glands → glands;
-  tumour-associated stroma, inflamed stroma, necrosis, rest → other;
-  unannotated → ignored.
-* Split **by slide** (not by ROI), 15% of slides held out, stratified TCGA vs
-  non-TCGA.
-* ResNet-50 encoder with Lunit Barlow Twins pathology weights, 3-channel
-  haematoxylin input, 512 px crops, rotation/flip/blur and haematoxylin
-  strength (×0.75–1.3) augmentation, cross-entropy + Dice, 25 epochs, ≤60
-  min. Selection by validation IoU of invasive tumour.
-* **IHC transfer check** after training: predicted invasive fraction of
-  tissue on HER2-IHC-40x holdout and BCI test patches (both cut from tumour
-  regions, so a high fraction is expected; a low one means H&E→IHC transfer
-  failed). Validation precision on H&E is the negative control (how much
-  non-tumour tissue is called invasive).
-* `scripts/train_tumour.py --config configs/tumour_seg.yaml`; pod runs via
-  `scripts/pod/run.sh configs/tumour_seg.yaml` (downloads TIGER itself with
-  `scripts/pod/fetch_tiger.sh`).
+* **Measured always.** Up to six 40× fields are read inside each detected
+  control core, and the DAB optical-density percentiles (p50–p99) of the
+  DAB-stained pixels are reported in the result (`stain_control`) and in a slide flag.
+* **Applied only with a declaration and a reference.** A control is known to be a
+  particular HER2 level only if the laboratory says so. With
+  `--control-level 3+` and a reference signature
+  (`configs/control_reference.json`, built by `scripts/build_control_reference.py`),
+  the strongest core is compared with the reference and the slide's DAB is
+  rescaled by `gain = reference p90 / slide p90`. Without either, the control is
+  reported and **not** used: a 0 or 1+ control read as 3+ would wrongly brighten the slide.
+* **Refused when implausible.** A gain outside 0.33–3.0 means the control itself
+  may have failed; the slide is flagged for a pathologist, not corrected.
+* **What it changes.** Only the threshold-based **cell evidence** is rescaled. The
+  neural pre-score always sees the field as scanned: it is trained with stain
+  augmentation and simulation showed little left to correct there.
+* **Honest limits.** The default reference is a *proxy*: pooled 3+ patient patches
+  of the training site, not a control strip. A hospital should build its own
+  reference from its own 3+ control crops
+  (`scripts/build_control_reference.py --images <folder>`). Two or more control
+  cores of different levels cannot be told apart, so only the strongest core is used.
+  Calibration has been tested in simulation and on the synthetic slide in
+  `tests/test_wsi.py`; it has not yet been validated on a real hospital's control slides.
 
-## Results
+## Findings on a real whole slide (ACROBAT case 39, HER2 IHC, Karolinska, CC BY 4.0; 36,864 × 19,712 px, 0.907 µm/px, 10×)
 
-GPU run 2026-10-02 (secure A40, 25 epochs in 37 min, $0.35 including two
-faulty-host retries). Numbers from `artifacts/tumour/results.json`.
-
-**H&E validation (26 held-out TIGER slides, best epoch 10)**
-
-| | value |
-|---|---|
-| Invasive tumour IoU | 0.67 |
-| Invasive precision / recall / F1 | 0.80 / 0.81 / 0.80 |
-| Other tissue IoU | 0.78 |
-| In-situ (DCIS) IoU | **0.00** |
-| Healthy glands IoU | **0.00** (0.05–0.09 in late epochs, not selected) |
-
-The model **does not separate DCIS or normal glands from invasive tumour.**
-They are 5% and 3% of training pixels and it never learned to predict them.
-DCIS is therefore likely to be included in the "invasive" map. This is the
-main reason the pathologist must check the tumour map, and the first thing to
-improve.
-
-**IHC transfer check (patches cut from tumour regions)**
-
-| | assumed µm/px | mean invasive fraction of tissue | patches > 30% invasive |
-|---|---|---|---|
-| HER2-IHC-40x holdout (n = 200) | 0.24 | 0.42 | 73% |
-| BCI test (n = 187) | 0.46 | 0.05 | 4% |
-
-BCI looked like a transfer failure. Investigating it found two separate
-things:
-
-1. **Grey-cast scans.** Many BCI images have no white background, and colour
-   deconvolution turned the grey into "haematoxylin everywhere". Fixed with a
-   white-point correction before deconvolution (`white_balance`, a no-op on
-   normal scans; regression test added).
-2. **Scale.** The model is sensitive to magnification. On 24 BCI patches the
-   invasive fraction is 2% at the documented 0.46 µm/px, 10% at 0.7 and 30% at
-   1.0. Nuclei in the patch datasets also measure inconsistently against TIGER
-   at their stated scales (HER2-IHC-40x ≈ 2.2×, BCI ≈ 0.7× TIGER), so the patch
-   sets' stated µm/px are probably not reliable. Real whole slides carry µm/px
-   from the scanner, so the pipeline reads them at the right scale, but a
-   model that tolerates scale error is still wanted (next step: retrain with
-   ×0.7–1.4 scale augmentation, ≈ $0.4).
-
-**Real whole slide: ACROBAT case 39 HER2 IHC** (Karolinska, CC BY 4.0;
-36,864 × 19,712 px, 0.907 µm/px, 10×)
-
-Run end to end in the portal (Chromium, Playwright): slide list, Deep Zoom
-viewer (67 tiles, 0 failures), analysis with live progress (12 min on CPU,
-150 tumour blocks, 12 fields), overlays, hotspots and PDF report, with no
-browser errors. Three safety problems surfaced and were fixed:
+Run end to end in the portal (Chromium, Playwright) during the earlier,
+tumour-model version: slide list, Deep Zoom viewer (67 tiles, 0 failures),
+analysis with live progress, overlays, hotspots and PDF report, with no browser
+errors. Three safety problems surfaced and were fixed, and all three still apply
+to the current design:
 
 | Problem on the real slide | Effect | Fix |
 |---|---|---|
-| On-slide **HER2 control cores** detected as invasive tumour | Patient's cells ≥2+ = **4.0%** (control cells); after exclusion **0.0%** (≥1+ 0.1%): tumour nests are unstained | `wsi/artefacts.find_control_cores`: small, compact tissue pieces standing ≥1.5 mm apart from the main tissue are excluded, drawn teal and flagged |
-| **Blue ink / mounting film** at the coverslip edge partly called tumour | Spurious tumour area | `blue_cast`: brightest 10% of a block > 15 B−R units bluer than glass → artefact (tissue measured −11..+4, ink +20..+32); drawn grey and flagged |
+| On-slide **HER2 control cores** read as patient tissue | The control's cells were counted as the patient's (≥2+ share 4.0% with the control, 0.0% after exclusion) | `wsi/artefacts.find_control_cores`: small, compact tissue pieces standing ≥1.5 mm apart from the main tissue are excluded, drawn teal and flagged |
+| **Blue ink / mounting film** at the coverslip edge | Spurious tissue and haematoxylin | `blue_cast`: brightest 10% of a block > 15 B−R units bluer than glass → artefact (tissue measured −11..+4, ink +20..+32); drawn grey and flagged. The check now runs on its own, without any model |
 | 10× slide got the guidance "ISH not indicated by IHC" | An unassessable slide read as reassuring | `recommend(..., assessable=False)` → "Not assessable at this magnification: rescan at 20×/40×" |
 
 A fourth problem was in the server, found while testing: renaming the site
-(`--site-name`) kept the training site's validation record (default
-`--site-validation`), so any hospital came up as **validated**. A validation
-record now counts only for the site it names; otherwise the gate falls back
-(here: blocked, since µm/px is then unknown). Regression test added.
+(`--site-name`) kept the training site's validation record, so any hospital
+came up as **validated**. A validation record now counts only for the site it
+names. Regression test added.
 
 ## Running it
 
 ```
-biomark --slide-root data/slides --tumour-model artifacts/tumour/best.pt \
-        --prescore-run artifacts/v2/run_b/best.pt
+biomark --slide-root data/slides --prescore-run artifacts/v2/run_b/best.pt
+# to use an on-slide 3+ control for stain calibration:
+biomark --slide-root data/slides --control-level 3+ --control-reference configs/control_reference.json
 ```
 
-Options: `--slide-mpp` (for slides without µm/px metadata),
-`--slide-max-fields`, `--slide-max-tumour-blocks`. Without `--tumour-model`
-the pipeline still runs, uses all tissue, and says on screen and in the
-report that tumour was **not segmented**.
+Options: `--slide-mpp` (for slides without µm/px metadata), `--slide-max-fields`,
+`--control-level`, `--control-reference`.
 
-## Next steps (in order of value)
+## Why the tumour segmenter was removed (2026-10-06)
 
-1. **DCIS vs invasive.** Retrain with stronger weighting of in-situ and glands
-   (or a separate invasive-vs-in-situ head) plus scale augmentation; one GPU
-   run of ≈ $0.4.
-2. **Kottayam check.** Run 5–10 Kottayam HER2 slides through the Slides page
-   in shadow mode; a pathologist marks each tumour map and exclusion as
-   right or wrong. This is the real test of H&E→IHC transfer.
-3. **Use the control cores.** They are now located automatically; measuring
-   their DAB gives per-slide stain calibration
-   (evaluation/control_calibration.py) instead of discarding them.
-4. **Speed.** About 12 min per slide on CPU, dominated by tumour detection;
-   a GPU or a coarser first pass would bring it to about 1–2 min.
+It was an extra built beyond the four objectives (stain variation, stain-shift
+conformal prediction, ASCO/CAP mapping, a deployable system), it was trained
+on H&E (TIGER) and never saw a HER2 IHC tumour annotation, and it could not
+separate DCIS or healthy glands from invasive tumour (IoU 0.00 for both on
+held-out H&E; invasive-tumour IoU 0.67). Removed: `wsi/tumour.py`,
+`scripts/train_tumour.py`, `configs/tumour_seg.yaml`, the TIGER download script,
+the `--tumour-model` / `--slide-max-tumour-blocks` options and the tumour overlay.
+The trained weights (`artifacts/tumour/best.pt`) were left on disk, unused and no longer
+packaged. They can be deleted. The git history keeps all of the code.
 
 ## Limits, said plainly
 
-* The tumour model has never seen a HER2 IHC tumour annotation. Its IHC
-  behaviour is checked only indirectly (transfer check above and visual review
-  of real IHC slides). A pathologist must check the tumour map, which is
-  shown as an overlay for that reason.
+* Tumour is not segmented (above): the pathologist confirms the scored area.
 * Public HER2 IHC whole slides with HER2 scores at ≥20× are not openly
-  available. ACROBAT (Karolinska, CC BY 4.0) has HER2 IHC WSIs but only at
-  10× (0.92 µm/px), so they test tumour detection and the viewer, and they
-  correctly receive **no** pre-score. Kottayam slides are the first real
-  ≥20× HER2 WSIs the system will see, and the site gate keeps the pre-score
-  in shadow mode there until locally validated.
-* CPU speed: a whole slide on CPU takes minutes (tumour blocks are capped);
-  the cap and the "not evaluated" share are reported.
+  available. ACROBAT has HER2 IHC WSIs but only at 10× (0.92 µm/px), so they test
+  the viewer, the exclusions and the safety rules, and they correctly receive **no**
+  pre-score. Kottayam slides are the first real ≥20× HER2 WSIs the system will see, and
+  the site gate keeps the pre-score in shadow mode there until locally validated.
+* Whole-slide time on CPU is no longer dominated by tumour detection; re-time it on the
+  target hardware (the earlier ~12 min per slide included tumour detection).
+* The control calibration needs a declared control level and a reference, and is
+  unvalidated on real control slides (above).

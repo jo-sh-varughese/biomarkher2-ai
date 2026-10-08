@@ -7,7 +7,7 @@ import { usePortal } from "../state/PortalContext.jsx";
 import { useT } from "../i18n/I18nContext.jsx";
 import { CAVEAT_KEYS, resolveCaveats } from "../i18n/caveats.js";
 
-const STEP_KEYS = ["detect", "classify", "baseline", "quantify", "hand"];
+const STEP_KEYS = ["tissue", "cells", "prescore", "guide", "hand"];
 const DATA_KEYS = ["local", "log", "report"];
 
 export default function Method() {

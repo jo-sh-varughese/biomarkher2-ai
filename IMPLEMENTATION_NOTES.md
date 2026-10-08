@@ -6,6 +6,14 @@ of the decisions — a teammate, an examiner, a future version of you six months
 from now — can pick this up and understand not just *what* the code does but
 *why* it does it that way.
 
+**Last revised: 2026-10-06.** This file was brought in line with the repository
+as of the 2026-10-03 "four objectives complete" commit, and then updated for the
+2026-10-06 changes (8-epoch model adopted as the default, tumour segmenter removed,
+on-slide control calibration, in-app prediction-set recalibration). Where it summarises a
+subsystem, the detailed and most current numbers live in the document named in
+that section (`PHASE4.md` "Final status", `PHASE5.md`, `docs/*.md`); if a number
+here ever disagrees with those, they win.
+
 If you only read one section, read [The one rule everything else follows](#the-one-rule-everything-else-follows)
 and [Where the project actually stands](#where-the-project-actually-stands).
 
@@ -13,21 +21,43 @@ and [Where the project actually stands](#where-the-project-actually-stands).
 
 ## What this is
 
-BioMarkHER2 is an AI-assisted **quantitative measurement tool** for HER2
-immunohistochemistry (IHC) slides, built as a final-year academic project with
-Kottayam Medical College as the clinical reference point. Pathologists score
-HER2 IHC on a 0 / 1+ / 2+ / 3+ scale based on membrane staining intensity and
-completeness, and the 2+ ("equivocal") category triggers a second, more
-expensive FISH test. The tool's job is to look at a stained field and report,
-per intensity class, how much of the tissue area is stained at that level —
-a *measurement*, handed to a pathologist, not a verdict.
+BioMarkHER2 is an AI-assisted **HER2 immunohistochemistry (IHC) measurement and
+pre-scoring system** built as a final-year academic project, with Government
+Medical College Kottayam as the clinical reference point. Pathologists score
+HER2 IHC on a 0 / 1+ / 2+ / 3+ scale (ASCO/CAP 2018, updated 2023) from the
+completeness and intensity of membrane staining; the 2+ ("equivocal") category
+triggers a second, more expensive in-situ hybridisation (ISH) test, and the
+0 / ultralow / 1+ boundary now decides HER2-low eligibility.
 
-There is no whole-slide-image data available yet — no scanner, no real
-patient slides. Everything so far has been built and validated against a
-public patch-level dataset (**HER2_IHC_40X**, ~11,000 pre-cut 1024×1024 IHC
-patches with one HER2 score per patch), used as an approved stand-in until
-real Kottayam slides arrive. That substitution, and the fact that this machine
-is CPU-only with no GPU, shapes almost every engineering choice below.
+For each analysed field or whole slide the system reports, side by side:
+
+* a **measurement** — how much of the tissue area is stained at each intensity,
+  from a segmentation model and, always next to it, from a classical
+  DAB-threshold control;
+* **cell-level ASCO/CAP evidence** — every detected cell classified by membrane
+  completeness and intensity, with the 10 % rule applied;
+* a **gated AI pre-score** (grade, probabilities, a 90 % conformal prediction
+  set) that a pathologist must confirm, shown only at sites that have been
+  validated;
+* **ISH decision support** and explanations, and a **pathologist review record**.
+
+It is an assistive tool, never an autonomous scorer.
+
+### Data actually used
+
+No local patient slides exist yet (no scanner; Kottayam slides are not
+digitised). Everything has been built and validated on public data used as
+approved stand-ins:
+
+| Dataset | Role | Notes |
+|---|---|---|
+| **HER2_IHC_40X** (~11,000 pre-cut 1024×1024 patches, one score per patch) | Training site; pseudo-label source; in-domain holdout | single source, no slide IDs (see "The split problem") |
+| **BCI** (Liu et al., CVPR-W 2022, Hamamatsu, ~20×) | A genuinely different second institution; cross-site evaluation and (in Run B) training | labels are case scores from the pathology report |
+| **ACROBAT case 39** (HER2 IHC whole slide, Karolinska, CC BY 4.0, 10×) | The one real whole slide; tests the viewer, the exclusions and the safety rules | too coarse to be scored, correctly receives no pre-score |
+
+The machine used for development is CPU-only; the larger v2 models were
+trained on rented GPUs under a fixed budget (docs/V2_TRAINING_PLAN.md). That
+CPU/GPU split shapes many engineering choices below.
 
 ## The one rule everything else follows
 
@@ -38,32 +68,39 @@ is CPU-only with no GPU, shapes almost every engineering choice below.
 Concretely, that rule has been enforced as actual code and actual tests, not
 just as a sentence in a document:
 
-- **No code path produces a `verdict` or `diagnosis`, and there is no bare
-  `score` / `her2_score` field.** `tests/test_app.py` asserts this by scanning
+- **There is no verdict or diagnosis field.** The only score-like output is the
+  AI pre-score, which lives only under `ai_prescore`, always carries
+  `requires_pathologist_confirmation: true`, and is never a final result.
+  `tests/test_app.py` and `tests/test_prescoring.py` assert this by scanning
   the JSON the server returns.
-- **An AI pre-score exists, deliberately gated (changed 2026-10-02 at the
-  project owner's request).** It lives only under `ai_prescore`, always
-  carries `requires_pathologist_confirmation: true`, and is shown only when
-  the site safety gate (`evaluation/safety_gate.py`) has validated the site
-  on local cases -- or in an explicit `--research-prescores` mode where every
-  pre-score is marked unvalidated. At any other site it is computed,
-  withheld and logged (`--shadow-log`) for later validation. Why: at a
-  hospital the model had never seen, its most confident answers were its
-  worst (25.6% correct in the top 20% by confidence; docs/V2_TRAINING_PLAN.md).
-  Tests pin each of these behaviours. Full description: docs/PRESCORING_SYSTEM.md.
-- **A human-review step is mandatory and cannot fire automatically.** The
-  review UI only submits on an explicit form `submit` event, requires a
-  reviewer identity, and offers "cannot assess from this field" as a first
-  class option — forcing a choice would manufacture agreement nobody actually
-  gave.
-- **Every number that could be misread is labelled with what it actually is**,
-  inline, not in a footnote: pseudo-labels vs. pathologist annotations,
-  tissue-area percentage vs. CAP's tumour-cell percentage, and the model's
-  specific, current failure to predict the 2+ class.
+- **The pre-score is gated (design changed 2026-10-02 at the project owner's
+  request; it replaced the earlier "never emit a score" design).** It is shown
+  only when the **site safety gate** (`evaluation/safety_gate.py`) has validated
+  the site against a local validation record (defaults: ≥100 cases, ≥90 %
+  accuracy, QWK ≥0.85, ≤1 % errors of two or more grades; thresholds for the
+  pathologists to set), or in an explicit `--research-prescores` mode where every
+  pre-score carries a red "research mode, never for patient care" warning. At
+  any other site it is computed, withheld, and logged (`--shadow-log`) so the
+  site can be validated later; with unknown magnification it is **blocked**.
+  Why: at a hospital the model had never seen, its most confident answers were
+  its worst (25.6 % correct in the top 20 % by confidence;
+  docs/V2_TRAINING_PLAN.md). Full description: docs/PRESCORING_SYSTEM.md.
+- **The viewer's raw measurements never impersonate a score.** The area-based
+  "stained by intensity" table is labelled with words (negative / weak /
+  moderate / strong) and folded under supporting measurements, so a tissue-area
+  "1+" cannot sit beside an AI "3+" and be read as a grade.
+- **A human-review step is mandatory and cannot fire automatically.** The score
+  is **not pre-filled from the AI** (to avoid automation bias); a final record
+  needs an attestation; disagreeing with the AI requires a reason (this is how
+  the model is audited). "Cannot assess from this field" is a first-class
+  option — forcing a choice would manufacture agreement nobody gave.
+- **Every number that could be misread is labelled with what it is**, inline,
+  not in a footnote: pseudo-labels vs. pathologist annotations, tissue-area
+  percentage vs. CAP's tumour-cell percentage, and the model's weakest class.
 - **Nothing is thrown away that would make a result hard to audit later.**
-  Every run writes its resolved config, its exact data split (with caveats),
-  per-epoch metrics, a confusion matrix, and the checkpoint, all as plain
-  files — openable a year from now without this environment.
+  Every training run writes its resolved config, its exact data split (with
+  caveats), per-epoch metrics, a confusion matrix, and the checkpoint, all as
+  plain files; every analysis records which model version produced it.
 
 ---
 
@@ -71,17 +108,24 @@ just as a sentence in a document:
 
 ```
 preprocessing/    Phase 1 — pixel-level image processing, stain math, the classical baseline
-training/         Phase 2 — dataset construction, splits, model, losses, training loop
-models/           the ResNet18-UNet wrapper (models/unet_seg.py) + architecture dispatch
-                  (models/__init__.py). A second candidate, SegFormer, was compared against
-                  it at full scale and removed after losing on every class — see PHASE5.md.
-evaluation/       Phase 4 — conformal prediction, stain variation, CAP/ASCO mapping (see PHASE4.md)
-app/              the review-viewer frontend (Phase 2's demo surface), + PDF report export
+training/         Phase 2/v2 — datasets, splits, losses, training loops (CPU and GPU), site adaptation
+models/           ResNet-UNet (unet_seg.py, RGB+DAB 4-channel input; ResNet18 shipped, ResNet-50
+                  for v2) and the multi-task score head (multitask.py). SegFormer was
+                  compared at full scale and removed (PHASE5.md).
+evaluation/       Conformal prediction (incl. cross-site, stain-shift weighted), stain variation,
+                  CAP/ASCO mapping and agreement, safety gate, site fingerprint, control calibration,
+                  membrane completeness, streaming
+app/              Backend (stdlib HTTP server), analysis, pre-score, cell evidence, ISH decision,
+                  explanations, report (PDF), review record, authentication, learning loop
+wsi/              Whole-slide reader, tissue, ink and control-core exclusion, field selection,
+                  on-slide control calibration, slide report and routes (no tumour segmenter)
+ui/               React review portal (built into the Docker image)
 configs/          YAML configs — one file fully describes one run
-scripts/          CLI entry points that call into the packages above
-tests/            280+ tests; the project's actual specification in executable form
+scripts/          CLI entry points; scripts/pod/ for the GPU-pod workflow
+docs/             Subsystem documents (see the documentation map in README.md)
+tests/            ~40 test files; the project's specification in executable form
 artifacts/        everything a run produces (not source — regenerable)
-data/             raw dataset + cached pseudo-label targets
+data/             raw datasets, cached pseudo-label targets, slides
 ```
 
 Config discipline is the same everywhere: **plain dataclasses + YAML, no
@@ -98,7 +142,7 @@ irreproducible.
 Phase 1 turns a raw RGB IHC patch into a tissue mask, a classical intensity
 classification, and area percentages. It is also the module every later
 phase leans on: Phase 2 trains on Phase 1's classification (as pseudo-labels),
-and the frontend calls Phase 1 live on every upload.
+and the application calls Phase 1 live on every analysis.
 
 ### Stain deconvolution (`preprocessing/stains.py`)
 
@@ -114,12 +158,16 @@ direction from their cross product, so the matrix is invertible) is inverted
 to recover per-stain concentration maps. The DAB channel from that
 decomposition is the number the entire quantitative method rests on.
 
+**Adaptive stain-vector estimation is Macenko's method** (SVD of the OD
+distribution, `estimate_macenko_stain_matrix`) — *not* non-negative matrix
+factorisation. Two bugs in that estimator were found and fixed on 2026-10-01
+(eigenvector sign, and H/DAB row order); every earlier stain-variation number
+was computed with the buggy version and is superseded (PHASE4.md).
+
 Stain **normalization** (Macenko or Reinhard, `apply_normalization`) is
-implemented but **defaults to off** — the substitute dataset is single-source,
-so there is no inter-scanner colour variation to correct, and normalizing
-would silently shift the exact DAB optical densities the thresholds below are
-defined on. It is there and tested for when genuinely multi-source (multi-
-scanner Kottayam) data arrives.
+implemented but **defaults to off** for single-site work, because normalising
+silently shifts the exact DAB optical densities the thresholds below are
+defined on. Cross-site use is different: see "Cross-institution stain shift".
 
 ### Tissue detection (`preprocessing/tissue.py`)
 
@@ -136,11 +184,10 @@ the final numbers. This was **measured, not assumed** — the docstring in
 `tissue.py` carries the actual numbers.
 
 The fix: detect tissue by **optical density** (mean absorbance across RGB),
-which responds to *any* stain absorbing light, not to which stain or how
-much. Saturation-based detection is kept available (`method="saturation"`)
-because it is still the right tool for low-magnification thumbnails, where
-the field is mostly glass and Otsu has a real boundary to find; it is simply
-wrong for patch-level 40× IHC, where the field is already almost all tissue.
+which responds to *any* stain absorbing light. Saturation-based detection is
+kept (`method="saturation"`) because it is still right for low-magnification
+thumbnails, where the field is mostly glass; it is simply wrong for patch-level
+40× IHC, where the field is already almost all tissue.
 
 ### The classical baseline (`preprocessing/baseline.py`)
 
@@ -148,16 +195,18 @@ wrong for patch-level 40× IHC, where the field is already almost all tissue.
 background, negative, weak (1+), moderate (2+), strong (3+) — at fixed cut
 points (`dab_od_weak=0.25`, `dab_od_moderate=0.50`, `dab_od_strong=0.80`,
 configurable in `configs/preprocessing.yaml`). This module plays **three
-different roles** and it matters which one is in play at any given moment:
+different roles**:
 
 1. It is the **pseudo-label generator** Phase 2 trains on (there are no
-   pixel-level pathologist annotations for this project — see Phase 2 below).
+   pixel-level pathologist annotations for this project).
 2. It is the **experimental control**. Because the deep model learns from
    these exact thresholds, the model agreeing with them proves nothing — it
-   has to be carried through to Phase 4 evaluation as a baseline so the deep
-   model's actual contribution is measurable rather than assumed.
+   is carried through evaluation as a baseline so the deep model's actual
+   contribution is measurable rather than assumed. (Measured: the shipped
+   model scores almost exactly what the rule scores, 76.0 % vs 75.0 %
+   in-domain and 39.9 % vs 39.6 % on BCI — which is why v2 exists.)
 3. It is the **area-percentage engine** (`area_distribution`) reused
-   everywhere a percentage is reported, including in the frontend.
+   everywhere a percentage is reported.
 
 Percentages are always **of tissue area**, with background explicitly
 excluded from the denominator — deliberately not CAP/ASCO's percentage of
@@ -167,16 +216,14 @@ excluded from the denominator — deliberately not CAP/ASCO's percentage of
 
 Splits a large image into fixed-size tiles, tracking each tile's position in
 **both** the working (possibly downsampled) frame and the original image
-frame. This bookkeeping matters because Phase 3 will need to stitch
-per-tile predictions back into a whole-slide map, and a coordinate error
-there is silent — the heatmap just ends up subtly, undetectably wrong.
-Downsampling is by **strided subsampling, never averaging**, because
-averaging would blend stained and unstained pixels and shift the optical
-densities the classes are defined on.
+frame, because a coordinate error in stitching is silent — the heatmap just
+ends up subtly, undetectably wrong. Downsampling is by **strided
+subsampling, never averaging**, because averaging would blend stained and
+unstained pixels and shift the optical densities the classes are defined on.
 
 ---
 
-## Phase 2 — Model and training (`training/`, `models/`)
+## Phase 2 — Segmentation training (`training/`, `models/`)
 
 ### The data problem: no pixel annotations exist
 
@@ -185,364 +232,432 @@ dataset gives one HER2 score per *patch* (its folder) and one per *source
 slide* (its filename). So the dense per-pixel targets the segmentation model
 trains on are **pseudo-labels**: literally the output of the Phase 1
 classical thresholder, cached to disk as PNGs precisely so they can be
-inspected and disputed rather than trusted blindly
-(`training/pseudo_labels.py`).
+inspected and disputed rather than trusted blindly (`training/pseudo_labels.py`).
 
-This has two consequences that are load-bearing for how every later result
-must be read:
+Consequences that are load-bearing for how every result must be read:
 
 - **Circularity.** A model trained on these targets that then agrees with
-  them has demonstrated nothing. The classical thresholder must be carried
-  through Phase 4 as a control; if the deep model does not beat it, that is
-  the honest finding.
-- **A ceiling.** The thresholder can't be exceeded on its own terms. What a
-  learned model can actually add is spatial coherence (thresholding is
-  per-pixel and noisy; a segmentation model sees neighbourhoods) and
+  them has demonstrated nothing; the classical thresholder is the control.
+- **A ceiling.** What a learned model can add is spatial coherence and
   robustness to illumination/stain drift — those are the things worth
-  measuring.
+  measuring. (The v2 multi-task model additionally learns from the real
+  0/1+/2+/3+ labels; see below.)
 
 The targets were sanity-checked before anything was trained on them: mean
 stained tissue area rises **monotonically** with the dataset's own patch
-label (0 → 1+ → 2+ → 3+), at both magnifications tested, which is the
-signature of a deconvolution and threshold set that behaves sensibly.
+label (0 → 1+ → 2+ → 3+), at both magnifications tested.
 
 ### The split problem: no slide identifiers
 
-The project brief (correctly) requires that patches from one slide never
-straddle the train/validation boundary — otherwise validation scores
-memorisation, not generalisation. That guarantee is **impossible on this
-dataset**: filenames carry no slide ID, only a sparse global counter, and the
-coarsest available grouping (slide-score × origin directory, 8 groups) is
-almost perfectly confounded with the label itself — holding out any one group
-removes an entire intensity class from training.
+The project brief requires that patches from one slide never straddle the
+train/validation boundary. That guarantee is **impossible on this dataset**:
+filenames carry no slide ID, and the coarsest available grouping (8 groups)
+is almost perfectly confounded with the label itself.
 
-`training/splits.py` documents this at length and does the next-best thing
-that's actually available:
+`training/splits.py` does the next-best thing:
 
-- The **held-out set** is defined by the `_train_` / `_test_` token baked
-  into each filename (inferred to be the dataset authors' own split — the
-  `train/`/`test/` *directories* were measured to cross this token in both
-  directions, 78% of `test/`'s files are named `_train_`, so the directories
-  are a re-shuffle, not a split, and holding them out would leak).
-- The **validation set** is a stratified random draw from the rest, and is
-  explicitly labelled `leakage_free=False` — used only to pick a stopping
-  epoch and draw curves, never quoted as a generalisation estimate.
-- A correct, group-respecting `grouped_split()` function exists and is
-  covered by tests, ready for the day real slide IDs (from Kottayam) arrive.
+- The **held-out set** is defined by the `_train_` / `_test_` token baked into
+  each filename (inferred to be the dataset authors' own split — the
+  `train/`/`test/` *directories* were measured to cross this token, so holding
+  them out would leak).
+- The **validation set** is a stratified random draw from the rest, explicitly
+  labelled `leakage_free=False` — used only to pick a stopping epoch.
+- A correct, group-respecting `grouped_split()` exists and is tested, ready for
+  real slide IDs.
 
-Both caveats (`VAL_LEAKAGE_CAVEAT`, `HOLDOUT_CAVEAT`) are written into every
-artifact a run produces — `split.json`, `run_summary.json`, the checkpoint
-itself, and every plot — so a number cannot be copied out of this project
-without its caveat attached.
+Both caveats are written into every artifact a run produces. One real
+guarantee **is** enforced: a 1024×1024 patch cut into four 512×512 tiles
+produces near-duplicate tiles, so the split is drawn over **source patches**
+first and expanded to tiles afterwards (`_assert_no_parent_overlap`).
 
-One real guarantee **is** available and is enforced: a 1024×1024 source patch
-cut into four 512×512 tiles produces near-duplicate tiles, so the split is
-drawn over **source patches** first and only then expanded to tiles, checked
-by `_assert_no_parent_overlap` on every run.
+The **held-out set is never evaluated during development** — a held-out number
+that gets watched stops being held out.
 
-**The held-out set itself is never evaluated during Phase 2.** It's resolved
-and its size recorded, then left alone — a held-out number that gets watched
-during development stops being held out, because every epoch/LR/loss-weight
-decision starts silently being made against it. It's Phase 4's to spend,
-once.
+### Model (`models/unet_seg.py`)
 
-### Model (`models/segformer_seg.py`)
+**ResNet18 encoder + U-Net decoder, 4 input channels (RGB + the DAB
+optical-density channel).** The DAB channel is a deliberate inductive bias: the
+pseudo-labels are a function of DAB OD, so handing the model that quantity,
+rather than making it re-derive it from RGB, helps a weakly-supervised setting
+with very little signal for the rarest class. The first convolution's extra
+channel is initialised from the mean of the pretrained RGB weights.
 
-SegFormer-B0 (`nvidia/segformer-b0-finetuned-ade-512-512`), the smallest
-SegFormer variant, chosen specifically to be trainable on CPU (3.7M trainable
-parameters, ~14–21 min/epoch on this dataset). The pretrained ADE20K decode
-head (150 classes) is discarded and re-initialised for 5 classes; the encoder
-weights are what's actually being reused, and the mismatch is logged loudly
-rather than happening silently.
-
-The one subtlety that matters most for everything downstream: **SegFormer's
-decode head predicts at H/4 × W/4**, and the wrapper's `forward()` always
-bilinearly upsamples back to input resolution before returning, so nothing
-outside this one module ever has to remember to do that upsample itself (a
-mismatch between what the loss sees and what the metrics see is exactly the
-kind of bug that silently corrupts a whole run). This H/4 resolution turned
-out to be the central finding of Phase 2 — see below.
+*History.* Phase 2 first used SegFormer-B0. Its decode head predicts at H/4,
+so the thin membrane rims the classes are made of were sub-pixel before they
+reached the loss. Moving to native 40× fixed weak (1+) (IoU 0.030 → 0.341) but
+moderate (2+) stayed at ~0.0001. Phase 5 compared a U-Net head-to-head on
+identical data and split (below); U-Net won on every class and **SegFormer was
+removed from the codebase** (`models/segformer_seg.py` no longer exists;
+`select_architecture` recognises only `"unet"`, and says why if asked for
+SegFormer).
 
 ### Loss (`training/losses.py`)
 
-**Cross-entropy + soft Dice**, weighted 1.0 / 0.5. The class distribution is
-severely skewed (background and negative dominate almost every patch); plain
-CE's cheapest route to a low average is to never predict the rare classes at
-all, which produces a good-looking pixel accuracy and a clinically useless
-model. Dice is computed per class and averaged over classes present in the
-batch — **absent classes are excluded from the average, not scored as 0 or
-1**, so a 0-score patch correctly containing no strong-staining pixels isn't
-penalised or rewarded for a class that was never there.
-
-`class_weights` supports an `"auto"` mode (see the weighted-run experiment
-below): the string is resolved to a concrete inverse-frequency weight list
-*before* the loss module is built, and the loss module **refuses to run**
-if it ever receives the literal string `"auto"` — a fail-loud guard against
-silently training unweighted after asking for weights.
+**Cross-entropy + soft Dice**, weighted 1.0 / 0.5 (focal loss is available).
+The class distribution is severely skewed; plain CE's cheapest route to a low
+average is to never predict the rare classes. Dice is averaged over classes
+present in the batch — **absent classes are excluded, not scored as 0 or 1**.
+`class_weights: "auto"` resolves to inverse-frequency weights *before* the loss
+is built, and the loss refuses to run if it ever receives the literal string
+`"auto"`.
 
 ### Training loop (`training/train.py`)
 
-Every run writes, as plain files in `output_dir`: the resolved config
-(`resolved_config.yaml`), the exact split with its caveats (`split.json`),
-a per-epoch CSV (`epoch_log.csv`), per-class metrics and a confusion matrix
-for every epoch, the best checkpoint (`best.pt`), and a `run_summary.json`
-tying it all together. No dashboard, no external service.
+Every run writes, as plain files: resolved config, exact split with caveats,
+per-epoch CSV, per-class metrics and confusion matrix, the best checkpoint, and
+`run_summary.json`. **Model selection is on tissue mean IoU** (the four staining
+classes weighted equally), not validation loss or overall mIoU, which is
+dominated by the easy background class. Metrics are accumulated into **one
+confusion matrix over the whole split**, and absent classes are reported as
+`None`, not `0`.
 
-**Model selection is on tissue mean IoU**, deliberately not on validation
-loss and not on overall mean IoU. Overall mIoU is dominated by the easy,
-huge background class and keeps climbing while the classes that actually
-matter clinically stagnate; tissue mean IoU (`ConfusionMatrix.tissue_mean_iou`,
-`training/metrics.py`) weights the four staining classes equally, which is
-the behaviour actually wanted.
-
-Metrics themselves are accumulated into **one confusion matrix over the whole
-split**, not averaged per-batch — a batch with three strong-class pixels
-would otherwise get equal say to a batch with a hundred thousand. Classes
-that never appear are reported as `None`, not `0`: an IoU of 0 means
-"predicted this and got it wrong," an absent class means "there was nothing
-to get right," and collapsing the two quietly drags the mean down for the
-wrong reason.
-
-Augmentation (`training/dataset.py`) is restricted to the eight dihedral
-transforms — flips and 90° rotations, nothing else. Colour jitter, contrast
-changes, or arbitrary-angle rotation would all either shift the DAB optical
-densities the classes are defined on (mislabelling the augmented pair) or
-require interpolating the label map (inventing classes that were never
-assigned).
+Augmentation is restricted to the eight dihedral transforms; colour jitter or
+arbitrary rotation would shift the DAB densities the labels are defined on or
+invent classes by interpolating the label map. (The v2 model, whose labels do
+not depend on exact DAB values, does use stain augmentation.)
 
 ### The training pool is whatever tiles are on disk
 
-`training/train.py` caps its fit and validation samples with
-`stratified_subsample`, and draws that sample from the patches that have tiles
-in the cache directory *at that moment*. A cache that grows between two runs
-therefore changes which 200 patches the second run trains on, with the same
-seed, split and config. That happened here. `data/cache/pseudo_labels_40x` was
-built on 2026-08-06 with 3,526 tiles (898 patches; `manifest.csv` and
-`tiles.json` describe exactly that) and gained 3,662 more on 2026-09-17,
-without those two files being rewritten. The baseline and class-weighted runs
-train on 792 tiles and validate on 119. The ordinal run, started after the
-growth, trained on 786 and validated on 116: a different 200 patches and a
-different 30 validation patches (PHASE5_ORDINAL.md says what that does to its
-comparison).
+`training/train.py` caps its fit/validation samples with `stratified_subsample`
+drawn from the patches that have tiles in the cache *at that moment*. A cache
+that grows between runs changes which patches the second run trains on, with the
+same seed and config. That happened here (cache built 2026-08-06 with 3,526
+tiles gained 3,662 more on 2026-09-17). The baseline and class-weighted runs
+train on 792 tiles / validate on 119; the ordinal run on 786 / 116 (different
+patches). The check is one log line: `fit: 200 patches -> 792 tiles`.
+`data/cache/pseudo_labels_40x_orig` reproduces the baseline sample exactly. New
+tiles go into a cache of their own, never into a training cache. A second
+consequence: the cache's holdout patches are almost exactly the calibration half
+of the conformal split (285 vs 13), which is why the September pixel-level
+conformal evaluation had only 52 test tiles.
 
-The check is one log line: `fit: 200 patches -> 792 tiles` for anything meant
-to be compared with the baseline. To keep a run on the original pool, point its
-`data.cache_root` at a subset built by `scripts/subset_pseudo_label_cache.py`.
-`data/cache/pseudo_labels_40x_orig` reproduces the baseline sample exactly, down
-to the class weights (identical to six decimals to those the weighted run
-computed). New tiles go into a cache of their own, never into a training cache
-(`scripts/build_conformal_test_cache.py` refuses to).
+### Resolution and the three levers on moderate (2+)
 
-The same mechanism has a second consequence. `scripts/build_pseudo_labels.py`
-and `evaluation/calibration_split.py` both draw from the holdout with the same
-seed, so they walk the same per-class permutation: the builder keeps the first
-few of each class and the calibration half is the first half. The cache's
-holdout patches are therefore almost exactly the calibration half (285 in it,
-13 in the test half), which is why conformal evaluation only ever had 52 test
-tiles.
+* **Run 1, effective 20×:** weak 0.030, moderate 0.000 despite pixel accuracy
+  0.81 (proof that pixel accuracy is the wrong number). Thin rims were
+  sub-pixel at H/4.
+* **Run 2, native 40×** (four 512 tiles per patch, `tiling.downsample: 1`):
+  weak ×11, tissue mIoU +33 %; moderate still ~0.0001.
+* **Phase 5 (ResNet18-UNet, same data/split/seed):**
 
-### Run 1 — effective 20× (the failure that set the direction)
+  | class | SegFormer | U-Net | Δ |
+  |---|---|---|---|
+  | negative | 0.815 | 0.839 | +0.024 |
+  | weak (1+) | 0.341 | 0.666 | +0.325 |
+  | **moderate (2+)** | **0.00006** | **0.589** | **+0.589** |
+  | strong (3+) | 0.618 | 0.891 | +0.273 |
+  | tissue mean IoU | 0.443 | **0.746** | +0.303 |
 
-500 fit / 120 val patches, 4 epochs, CPU-only. **Weak (1+) and moderate (2+)
-were essentially unlearnable** (IoU 0.030 and 0.000) despite a healthy
-overall pixel accuracy of 0.81 — proof, concretely, of why pixel accuracy is
-the wrong number to trust and tissue mean IoU is the one to read. The
-prediction preview showed *why*: predictions were smooth blobs where the
-targets are thin membrane lace. The diagnosis: at 20×, a membrane rim is
-1–3 pixels wide — **sub-pixel at the H/4 resolution the decode head actually
-predicts at.** Large confluent 3+ regions survive because they're big enough;
-thin rims cannot.
-
-### Run 2 — native 40× (the fix that followed from the diagnosis)
-
-Same compute, same 512×512 model input — but instead of downsampling a
-1024×1024 patch by 2 into one 512 tile, it's cut into **four native-resolution
-512 tiles** (`configs/preprocessing.yaml: tiling.downsample: 1`). Every
-membrane is now twice as wide in pixels the model actually sees.
-
-Result: **weak (1+) IoU went from 0.030 to 0.341 (×11)**, tissue mean IoU
-+33%, and — tellingly — epoch 1 of the 40× run already beat the *entire*
-4-epoch 20× run, on 40% of the data. That is the signature of a resolution
-problem, not a data-volume problem.
-
-**Moderate (2+) did not move: IoU 0.0001 (253 pixels out of 21 million).**
-The confusion matrix shows the moderate row splitting ~26% into weak and
-~71% into strong — the model treats 2+ as if it doesn't exist. Full numbers
-and the run-by-run comparison table live in `PHASE2.md`.
-
-### The class-weight experiment (in progress)
-
-Two candidate explanations remained for why 2+ specifically still fails at
-40×, and they are separable by experiment:
-
-1. Moderate rims are even thinner than weak ones and may still be sub-pixel
-   at H/4 even at native resolution (→ fix is supervising at H/4 directly, or
-   full-resolution refinement).
-2. At 3.6% of pixels, sandwiched between two other classes, cross-entropy
-   has little to lose by never choosing it (→ fix is inverse-frequency class
-   weights).
-
-`inverse_frequency_weights()` (`training/losses.py`) existed since early
-Phase 2 but was never wired up — off by default because on a distribution
-this skewed it can destabilise training, and "does it help" was explicitly
-left as an empirical question for a run to answer, not a default to flip
-silently.
-
-**What was built to run that experiment:**
-
-- `LossConfig.class_weights` accepts a literal `"auto"` in addition to a
-  concrete list or `None`.
-- `training.train.resolve_class_weights()` turns `"auto"` into the actual
-  inverse-frequency list, counted over **every** fit tile (not a sample —
-  the weights are part of the experiment's definition, and a value derived
-  from a noisy subsample is a number nobody could reproduce), and writes the
-  resolved list back into `resolved_config.yaml` so the run is reproducible
-  from its own output artifact rather than from whatever happened to be
-  cached at the time it ran.
-- `SegmentationLoss.__init__` **raises** if it's ever handed the literal
-  string `"auto"` — fail loud rather than silently training unweighted.
-- `configs/training_weighted.yaml` — byte-for-byte identical to
-  `configs/training.yaml` except `loss.class_weights: auto` and
-  `output_dir: artifacts/phase2_40x_weighted`, so the comparison is
-  controlled. It states the decision rule *in the file, before the run*:
-  moderate IoU moving meaningfully off zero means rarity was (at least part
-  of) the cause; staying near zero means it wasn't, and the next experiment
-  is supervising at H/4 instead.
-
-**Status:** this run is incomplete. Epoch 1 finished and was checkpointed
-before the process was interrupted (training has no resume-from-checkpoint
-capability — a restart begins again from epoch 0). The completed epoch 1
-already shows a real, non-trivial signal:
-
-| class | epoch-1 IoU (weighted) | run-2 best IoU (unweighted, epoch 4) |
-|---|---|---|
-| moderate (2+) | **0.0849** | 0.0001 |
-| weak (1+) | 0.280 | 0.341 |
-| background / negative | lower than unweighted at the same point | — |
-
-Moderate moving from *effectively zero* to *0.08 in a single epoch* is
-evidence that class rarity is a real contributing cause — though the run is
-only ~1.4 of 4 planned epochs, and the other classes are temporarily lower,
-which is an expected effect of reweighting the loss landscape early in
-training rather than a red flag. This needs a full 4-epoch run before the
-decision rule in the config can be applied for real.
+  This reversed the working hypothesis that the failure was a data/label ceiling:
+  it was architecture-specific (decode resolution) and, partly, data volume.
+* **Three cheap levers on moderate**, each with its decision rule fixed
+  beforehand: inverse-frequency class weights (`PHASE5_CLASS_WEIGHTS.md`,
+  **rejected**), an ordinal-distance auxiliary loss (`PHASE5_ORDINAL.md`,
+  **rejected**, moderate ended below baseline), and 8 instead of 4 epochs
+  (`PHASE5_8EPOCHS.md`, **adopted**: moderate 0.589 → 0.657, every class
+  improved). **Adopted as the default on 2026-10-06:** `configs/training.yaml`
+  now trains 8 epochs into `artifacts/phase2_unet_8epochs`, which the server,
+  Docker, `serve.bat`, the conformal scripts and `scripts/package_models.sh` load by
+  default. Its pixel-level conformal calibration was rebuilt for that checkpoint
+  (`scripts/calibrate_conformal.py`: the server refuses a calibration made for another
+  checkpoint), the checksum manifest was regenerated, and the server was started on it.
+  The old 4-epoch default is kept unchanged as `configs/training_baseline_4epochs.yaml`
+  (output `artifacts/phase2_unet`) so the baseline in `PHASE5*.md` stays reproducible.
+* **Membrane completeness as a proxy** (`PHASE5_MEMBRANE_COMPLETENESS.md`)
+  was prototyped offline and is mostly negative: about a third of validation
+  tiles have no moderate class and score IoU 0.0 mechanically, which produced
+  most of the proxy's apparent correlation.
 
 ---
 
-## The review-viewer frontend (`app/`)
+## The stain map and the v2 pre-score model
 
-The user asked for this to be "well showable" — demonstrable to the
-pathologist stakeholder, not just runnable from a script. It is a complete,
-tested, local web application.
+### Why v2
 
-### Why a hand-rolled stdlib server
+The shipped segmentation model scores almost exactly what the DAB rule scores
+(76.0 % vs 75.0 % in-domain; 39.9 % vs 39.6 % on BCI), and it trained on 200 of
+7,729 available patches (a CPU limit). **v2** (docs/V2_TRAINING_PLAN.md) changes
+what the network learns from and how much it sees:
 
-`app/server.py` uses `http.server.ThreadingHTTPServer` — no Flask, no
-FastAPI, no CDN, nothing fetched from the internet at runtime. This machine
-is a CPU-only laptop, and the machines this is meant to be *shown on*
-(hospital and college computers) are exactly the environment where installing
-a web framework is friction and an internet dependency is a failure mode.
-Everything — HTML, CSS, JS, model, images — is served from local disk.
+* a score head on the U-Net encoder, trained on the real 0/1+/2+/3+ labels,
+  with attention pooling over all tiles of a patch/case (`models/multitask.py`);
+* ResNet-50 encoder with pathology self-supervised weights (Lunit,
+  Kang et al., CVPR 2023);
+* all 7,729 fit patches; stain/zoom/blur/noise augmentation on the GPU
+  (`training/gpu_ops.py`); a multi-site option (our data + BCI train);
+* the segmentation decoder is still trained on the pseudo-label rule so the
+  viewer's explainable intensity map is preserved;
+* budget guards (wall-clock cap, per-epoch checkpoints with resume, throughput
+  guard, auto-stop pod). Targets and protocol were written **before any GPU
+  run** and not changed afterwards. Hard budget $6.72.
 
-It binds to `127.0.0.1` by default and prints a loud warning if pointed
-anywhere else: this tool displays medical images and records clinical
-opinions with no authentication and no transport security, so it is a local
-demo and review aid, not a deployable service.
+### Results (held-out; never used for selection)
 
-### The analysis engine (`app/analysis.py`)
+| Run | Data | In-domain (HER2_IHC_40X holdout) | BCI test |
+|---|---|---|---|
+| A | our data only | 88.7 %, QWK 0.965 | **unseen site:** 48.3 % raw, 54.5 % site-normalised, QWK ~0.31–0.33 |
+| **B (deployed)** | our data + BCI train | **92.3 %, QWK 0.975** | 75.3 %, QWK 0.698 (a *seen* site, new images) |
+| C | BCI only | — | 58.8 % / our holdout (unseen) 67.3 %, QWK 0.717 |
 
-Deliberately separated from the HTTP layer so it's testable without a server
-and reusable by Phase 3 (which will need to call the same per-tile analysis
-when it stitches whole slides). `Analyzer`:
+Reading these honestly: the in-domain target (>90 % accuracy, QWK ≥ 0.90) was
+met by Run B; Run A missed the accuracy target by 1.3 points. The **unseen-site
+target (>80 %) was missed** — at a hospital the model never trained on, accuracy
+fell to ~48–55 %. Errors are almost all 0↔1+ and 1+→2+, the boundaries
+pathologists also disagree on most. The cell-level ASCO/CAP rule on the holdout
+reaches 72.0 % accuracy / QWK 0.844 (recall 0/1+/2+/3+ = 64/52/76/96 %).
 
-1. Loads the trained checkpoint once at start-up (`best.pt` + the training
-   config that describes its architecture).
-2. `.predict(rgb)` tiles an image of *any* size into the model's native tile
-   size, edge-replicate-pads any ragged edge tile (not zero-padding — a
-   black margin is a strong artificial edge the model would predict on), and
-   stitches the tile predictions back — covering images that aren't an exact
-   multiple of the tile size, tested explicitly.
-3. `.analyze(rgb)` runs Phase 1 preprocessing and the model side by side,
-   then **restricts the model's prediction to the same tissue mask the
-   classical baseline uses** — without this, the two columns would be
-   measured over different denominators and their percentages would not be
-   comparable at all.
+Experiments that did **not** close the cross-site gap are recorded rather than
+dropped: label-free site adaptation (BatchNorm adaptation hurt, QWK 0.33 → 0.23;
+self-training fixed the "never predicts 1+" failure, 1+ recall 2 % → 42 %, but
+did not improve QWK), 25-case few-shot calibration (unreliable: 31–58 %
+depending on the draw), training in a shared stain space (hurt unseen-site
+accuracy), and per-slide control calibration (recovers most run-to-run loss for
+threshold scoring in simulation; the network is already robust to that variation).
+Run B is the safety gate's reference: the gate exists *because* of these results.
 
-Two more things it does on purpose:
+### Cell-level ASCO/CAP evidence (`app/cells.py`)
 
-- Every rendered image goes through `to_data_uri()`, which downsizes with
-  **nearest-neighbour resampling only**. Class maps are colour-coded; any
-  smoother resampling (bilinear, etc.) would blend a "weak" colour and a
-  "strong" colour into something that visually reads as "moderate" — quietly
-  inventing, in the picture, exactly the class the model is known not to
-  predict. Tested directly: `test_transport_downscaling_invents_no_classes`
-  decodes a downscaled overlay and asserts every pixel is one of the five
-  palette colours, nothing in between.
-- The colour palette is colour-blind-safe and monotonically darker with
-  intensity, so the ordering survives greyscale printing and the two common
-  forms of colour vision deficiency.
+Every detected cell is classified by membrane completeness and intensity; the
+10 % rule gives the category, with HER2-low / ultralow notes. Cut points were
+calibrated on 80 training-split patches (`scripts/calibrate_cells.py`,
+`configs/cell_params.json`) and the held-out figure measured once. Limits: field
+level (every detected cell counts: tumour is not segmented),
+and cut points are calibrated against patch labels, not pathologist cell
+annotations.
 
-### The server (`app/server.py`)
+---
 
-Routes: `GET /` (the page), `GET /api/context` (provenance, sample list,
-class legend, caveat text, review-choice list), `POST /api/analyze` (patch
-id from the dataset, or a base64-uploaded image), `POST /api/review`
-(records a pathologist's confirmed score).
+## Cross-institution stain shift (Objectives 1 and 2)
 
-Both the sample-file reader and the static-file server independently guard
-against path traversal (`root not in path.parents`) — tested with literal
-`../../../etc/passwd`-style inputs. Uploads are capped at 24 MB. Reviews are
-appended to `artifacts/reviews.jsonl`, one JSON object per line, each
-carrying a UTC timestamp and which run produced it — **this file is the
-direct input Phase 4 needs** to compute Cohen's kappa between a pathologist's
-actual score and the model's measurements, on fields a pathologist actually
-looked at.
+The Phase 4 numbers in this section **supersede** the September smoke-scale
+write-up (computed with the buggy stain estimator on 52 patches).
 
-### The UI (`app/static/`)
+### Objective 1 — adaptive stain-vector analysis
 
-Three steps: pick a sample patch or upload an image → see four panels
-(original / detected tissue / model intensity map / classical baseline) and
-one area-percentage table, model and baseline **always shown side by side,
-never one without the other** → an explicit review form.
+Per-image Macenko stain vectors (corrected estimator). Across 100 images per
+source (`scripts/stain_variation_sites.py`): stain *directions* differ between
+institutions by 3–5× the variation inside one institution or one slide
+(e.g. training site vs BCI: haematoxylin 15.9°, DAB 8.4°; training site vs the
+ACROBAT slide: DAB 27.8°), and counterstain strength differs about 3-fold.
+Between-group distance exceeds within-group spread in the training data too
+(1.42×, groups being confounded with HER2 score because no slide IDs exist).
 
-Three framing decisions are encoded as literal test assertions in
-`tests/test_app.py`, specifically because they are the things a future,
-well-intentioned UI tweak is most likely to erode by accident:
+`evaluation/stain_shift.py` turns a stain descriptor into a similarity weight;
+`evaluation/stain_variation.py` reports the same quantity as a variation
+summary, so a calibration weight and a reported "distance" are literally the
+same number. `evaluation/cross_site.py` provides **site-level** stain profiles
+and normalisation (one Macenko matrix and concentration scale per institution,
+from unlabelled images), which — unlike per-image methods — preserves the DAB
+difference between a 0 and a 3+ case. Normalisation recovers about 10 points of
+four-class accuracy on BCI but does not close the gap
+(docs/CROSS_SITE_STAIN_NORMALIZATION.md); it *hurts* once a model has trained on
+the site's raw colours.
 
-1. **No score, ever, anywhere in the payload or the page.** The page states
-   in words that it does not assign a HER2 score; a person assigns the score,
-   and nothing is recorded until they submit the review form themselves.
-2. **The baseline is shown every time, not behind a toggle.** The model was
-   trained on the baseline's own output, so agreement between them is
-   agreement with the rule the model was trained to imitate — not evidence
-   of clinical accuracy. Hiding that comparison behind an optional click
-   would let a viewer see only the flattering number.
-3. **The moderate (2+) row is visually flagged in the table itself**
-   (`tr.unreliable`, an amber warning), not only in a footnote, because a
-   caveat at the bottom of the page is a caveat that gets cropped out of a
-   screenshot. On a real 3+ field from the dataset, the model reports 0.02%
-   moderate where the baseline reports 6.79% — the failure is visible on the
-   very first field anyone tries.
+### Objective 2 — stain-shift-weighted conformal prediction
+
+`evaluation/cross_site_conformal.py`, `scripts/conformal_cross_site.py`
+(results in `artifacts/conformal_cross_site/`). LAC score on the image-level
+HER2 grade; calibration on 951 held-out training-site images; tests on 953
+same-hospital and 338 BCI images. Coverage at the other hospital, target 95 %:
+
+| Method | Run A (BCI never seen) | Run B (deployed) |
+|---|---|---|
+| unweighted | 58.9 % | 82.2 % |
+| **stain-shift weighted (the project's method)** | 63.6 % | **91.7 %** |
+| likelihood-ratio weighted (Tibshirani et al.) | 99.7 % (set size 3.9 of 4) | 99.1 % |
+| calibrated on 25 local cases | 95.9 % (set size 3.8) | **95.9 % (set size 2.1)** |
+
+Standard conformal prediction **loses its guarantee** under real
+cross-institution shift (95 % promised, 59–82 % delivered). Stain-shift weighting
+improves coverage (82 % → 92 %) **but does not fully restore it**: part of the
+shift is in how institutions grade (concept shift), which no covariate weighting
+can correct. Likelihood-ratio weighting restores validity only by returning
+nearly every grade (the two institutions' stains are almost perfectly separable,
+domain AUC 0.999, effective calibration size 2). Calibrating on ~25 local cases
+restores the guarantee with informative sets. In the product, the 90 % conformal
+set (`app/prescore.prediction_set`, `scripts/calibrate_prescore_sets.py`) is
+shown only at the site it was calibrated for.
+
+### Objective 3 — ASCO/CAP mapping and agreement
+
+`evaluation/cap_mapping.py`. Against the datasets' expert labels: HER2-IHC-40x
+holdout 92.3 % / QWK 0.975 (n = 1,904); BCI test 75.3 % / QWK 0.698 (n = 977).
+Agreement with *this project's own pathologists* uses the review log
+(`artifacts/reviews.jsonl`, `scripts/evaluate_cap_agreement.py`): **zero real
+reviews exist**, so that number cannot be reported yet.
+
+---
+
+## The application
+
+### Backend (`app/`)
+
+`app/server.py` uses `http.server.ThreadingHTTPServer` — no Flask, no FastAPI, no
+CDN, nothing fetched from the internet at runtime — because the machines this
+must run on are hospital and college computers where installing a framework is
+friction. It binds to `127.0.0.1` by default and warns loudly otherwise.
+Uploads are capped; static-file and sample-file readers independently guard
+against path traversal.
+
+| Module | Role |
+|---|---|
+| `analysis.py` | `Analyzer`: loads the checkpoint once, tiles an image of any size (edge-replicate padding), stitches, restricts the model's prediction to the **same tissue mask** the baseline uses so the two columns share one denominator; images downscaled for transport by nearest-neighbour only so no in-between class colour is invented |
+| `prescore.py` | the AI pre-score (grade, probabilities, borderline flag), 90 % prediction set, Grad-CAM evidence, per-region pre-scores and heterogeneity |
+| `cells.py` | cell-level ASCO/CAP evidence and membrane map |
+| `guidance.py`, `decision.py`, `explain.py` | ISH guidance and decision support, explanations (below) |
+| `report.py` | PDF report (ReportLab) incl. sign-off block |
+| `review_record.py` | pathologist review record (below) |
+| `auth.py`, `admin_cli.py` | accounts, sessions, admin console (below) |
+| `learning/` | continual learning loop (below) |
+
+### The portal (`ui/`)
+
+A React portal (built into the Docker image; the `biomark` command builds
+`ui/dist` on first run) with pages for field analysis, whole slides, cases,
+dashboard, pathologist review, method/model card, profile and the admin
+console. Class maps use a colour-blind-safe, monotonically darker palette so
+ordering survives greyscale printing. Image **Enlarge** is a real zoom/pan
+viewer (OpenSeadragon); layout was audited at 100/125/150/200 % browser zoom.
+
+Framing decisions are literal test assertions, because they are what a
+well-meaning UI tweak is most likely to erode: the model is **never shown
+without the classical baseline** (agreement with the rule it was trained to
+imitate is not clinical accuracy); the moderate (2+) row is flagged **in the
+table itself**, not only in a footnote; a pre-score is never a verdict.
+
+### ISH decision support and explanations (`docs/ISH_DECISION_SUPPORT.md`)
+
+The panel follows the order in which a pathologist decides on ISH: the ASCO/CAP
+algorithm with this case's step lit; weighted evidence for and against ISH; a
+field-quality checklist (focus calibrated on held-out fields, tissue %, cell
+count, magnification, site validation, AI–cell agreement, heterogeneity,
+control reminder); each decisive share with its 95 % Wilson interval against
+the 10 % line; sensitivity of the grade under 27 nearby cut-point combinations;
+the exact cell counts that would change the grade; and where to score ISH.
+Clinical rules worth knowing: **0 vs 1+ is not an ISH question** (it decides
+HER2-low eligibility and is flagged separately); **too few cells is a quality
+failure, not a reason for ISH**; a 3+ goes to "ISH recommended" only for reasons
+that question the grade, never for cell count alone.
+
+### Pathologist review (`docs/PATHOLOGIST_REVIEW.md`)
+
+One record per save, appended and never edited: specimen and pre-analytics
+(fixation, cold ischaemia, clone), controls and adequacy, the HER2 assessment
+(score, ultralow flag, ASCO/CAP category, cell percentages, heterogeneity,
+artefacts), agreement with the AI (a reason is required to disagree), decision
+and follow-up, and a snapshot of what the system showed. Status moves
+draft → preliminary → final; a final report needs an attestation and is changed
+only by an **amendment** with a stated reason (a new version pointing at the old
+one). No final score on tissue marked inadequate; percentages cannot exceed
+100 %.
+
+### Accounts and the admin console (`docs/ACCOUNTS_AND_ADMIN.md`)
+
+Three roles enforced on every API route: **Administrator**, **Pathologist**
+(analyse, record assessments, mark regions, download reports) and **Viewer**
+(analyse, download). SQLite (standard library); passwords hashed with scrypt
+(N=2¹⁴, r=8, p=1) with per-password salts; sessions are random 256-bit tokens in
+`HttpOnly; SameSite=Strict` cookies with only the SHA-256 stored; CSRF token on
+every state-changing request; per-account lockout and per-IP throttling;
+identical answers for wrong password and unknown email; the last administrator
+cannot be demoted, disabled or deleted; one-time links are stored as hashes.
+The console covers users, access requests, sessions, an audit log with export,
+settings (timeouts, password policy, lockout) and deployment readiness. First
+run prints a one-time setup link to create the first administrator.
+
+### Whole slides (`wsi/`, `docs/WHOLE_SLIDE.md`)
+
+A scanned slide (`.svs`, `.ndpi`, `.tiff`, `.mrxs`) is browsed at full
+resolution and analysed: it is read **in µm/px, not pyramid levels** (so
+different scanners are resampled to one scale); tissue is found on an 8 µm/px
+overview; **blue ink / mounting film** (a colour check block by block, no model) and
+**on-slide control cores** (small, compact pieces standing ≥1.5 mm from the main
+tissue) are excluded and drawn on the overlay; up to 40 fields are spread over the
+remaining tissue; cell-level ASCO/CAP evidence is counted per field; a slide-level
+pre-score comes from attention pooling over all tiles, with heterogeneity and
+hotspots; the same site gate applies. Slides coarser than 0.5 µm/px (below ~20×)
+**never get a pre-score**.
+
+**Tumour is not segmented.** An invasive-tumour segmenter (a ResNet-50 U-Net trained on
+TIGER H&E, haematoxylin channel only) was built and then **removed on 2026-10-06**: it is
+not one of the four objectives, it never saw a HER2 IHC tumour annotation, and it did
+not separate DCIS or healthy glands from invasive tumour (IoU 0.00 for both; invasive
+tumour IoU 0.67). Fields are therefore chosen over all usable tissue, so stroma,
+in-situ carcinoma and normal ducts can be counted; every slide result says so and the
+pathologist confirms that each field lies in invasive tumour. The git history keeps the
+code; the weights file `artifacts/tumour/best.pt` is left on disk, unused and no longer
+packaged.
+
+**On-slide control calibration.** The control's DAB optical density is measured on every
+slide that has one. It is **used** only when the laboratory declares the control's level
+(`--control-level 3+`) and a reference signature exists
+(`configs/control_reference.json`, built by `scripts/build_control_reference.py`; the
+default is a proxy made of 3+ patient patches of the training site, so a hospital should
+build its own from its own control). The strongest core's p90 is compared with the
+reference and the slide's DAB is rescaled by that gain, **for the threshold-based cell
+evidence only**; implausible gains (outside 0.33–3.0) are refused and flagged. Without a
+declaration the control is reported, never applied. Tested on synthetic slides; not yet
+validated on a real hospital's controls.
+
+On the real 10× ACROBAT slide three safety problems were found and fixed (on-slide HER2
+**control cores** counted as the patient's — now detected and excluded; blue ink/film at
+the coverslip edge flagged as artefact; an unassessable 10× slide receiving "ISH not
+indicated", now "not assessable at this magnification"), and a server bug where renaming
+the site kept the training site's validation record, so any hospital looked validated,
+was fixed with a regression test.
+
+### Continual learning (`app/learning/`, `docs/LEARNING.md`)
+
+Every analysed case is stored; signed (final) pathologist reviews become labels
+and region annotations become tile labels; a **candidate version** is trained on
+demand (only the attention pooling and score head, ~66 k parameters, on frozen
+features, with training-site replay, class balancing and an anchor penalty) and
+judged against **gates fixed in advance** (≥40 signed cases and ≥3 per grade;
+no forgetting on a locked reference set; ≥2 points of real local gain by
+5-fold cross-validation; no new two-grade errors). Passing makes a version
+*eligible*; **an administrator must activate it** (audited), and any earlier
+version can be re-activated. It deliberately does not update itself after every
+slide: a model that changed its own weights automatically could be shifted by
+one mislabelled case with nobody able to say which model produced which report.
+Activating a version switches the prediction sets off until they are
+recalibrated on signed local cases; the admin page now does this in one audited
+step (**Learning -> Prediction sets -> Recalibrate**), needing at least 25 signed
+cases (`calibration.min_cases`), keeping the previous file, and storing 1.0 (every
+grade) for any level the data cannot support.
+
+### Deployment (`docs/DEPLOYMENT.md`)
+
+One Docker container serves the whole system (multi-stage image that builds the
+portal, non-root user, health check, `docker-compose.yml`). Models are mounted,
+not baked in (`scripts/package_models.sh` → a bundle with a SHA-256 manifest).
+Minimum 4 CPU cores / 8 GB RAM, no GPU; a field takes ~20–30 s and a whole slide
+~10–15 min on 4 cores. Patient images and records never leave the server. CI
+builds the image from a clean checkout and checks that the server and every
+dependency load inside it; two defects found that way on 2026-10-03 (the image
+omitted `wsi/`; `requirements.txt` omitted OpenSlide) are fixed. The hosting
+site is a hospital decision.
 
 ---
 
 ## Testing philosophy
 
-Two different kinds of thing are tested, and they are not the same kind.
-Ordinary correctness (overlays keep their class values, tiled prediction
-covers the whole image, splits contain no leaked patches, weights resolve to
-the right length) is tested the normal way. But a second category —
-**framing constraints** — is tested just as literally: that no score field
-can appear, that the review step cannot fire without an explicit submit, that
-the 2+ class is flagged in the actual rendered output and not just in a
-comment. These are treated as load-bearing specification, not decoration,
-because they are exactly the properties a future edit could break without
-anyone noticing until a pathologist is looking at a silently-overconfident
-screen.
+Two different kinds of thing are tested. Ordinary correctness (overlays keep
+their class values, tiled prediction covers the whole image, splits contain no
+leaked patches, weights resolve to the right length) is tested the normal way.
+**Framing constraints** are tested just as literally: that no verdict field can
+appear, that the pre-score is withheld at an unvalidated site, that the review
+step cannot fire without an explicit submit, that the 2+ class is flagged in the
+rendered output, that the on-slide control is never used without a declared level, that a
+validation record counts only for the site it names. These are load-bearing
+specification, not decoration.
 
-154+ tests pass as of the last full run (`pytest -q`), spanning Phase 1
-(stains, tissue, tiling, pipeline), Phase 2 (splits, losses, model, metrics,
-pseudo-labels, the training loop), and the app.
+The suite lives in ~40 files under `tests/`. On 2026-10-06 `pytest -q` gave **514 passed, 0 skipped**
+(about 9 minutes on a CPU laptop). Two environment traps are worth knowing: a third-party package in
+site-packages can ship its own top-level `tests` package and shadow this folder (fixed by
+`tests/__init__.py`), and the whole-slide tests are skipped silently if OpenSlide
+(`openslide-bin`, `openslide-python`, both in `requirements.txt`) is not installed, as is `pypdf`
+for the report tests. Earlier counts in older copies of this document (154, 280, 408) were snapshots
+from earlier phases.
 
 ---
 
@@ -555,17 +670,24 @@ python scripts/sanity_check_phase1.py
 # Build the pseudo-label cache (native 40x; downsample:1 in configs/preprocessing.yaml)
 python scripts/build_pseudo_labels.py --limit 900 --preview 8
 
-# Train
+# Train the stain map
 python scripts/train_phase2.py --config configs/training.yaml
 python scripts/plot_training.py --run artifacts/phase2_unet
 python scripts/predict_preview.py --run artifacts/phase2_unet --count 8
 
-# Run everything
+# Evaluation (Phase 4)
+python scripts/stain_variation_sites.py
+python scripts/conformal_cross_site.py
+python scripts/evaluate_cap_agreement.py
+
+# v2 (GPU pod workflow): docs/V2_TRAINING_PLAN.md; whole slides: docs/WHOLE_SLIDE.md
+
+# Tests
 pytest -q
 
-# Launch the reviewer-facing demo
-python -m app.server --run artifacts/phase2_unet
-# then open http://127.0.0.1:8000
+# Launch the portal (builds ui/dist the first time; prints a one-time admin setup link)
+biomark            # or: python -m app.server --run artifacts/phase2_unet
+# then open http://127.0.0.1:8000     (Docker: docs/DEPLOYMENT.md)
 ```
 
 `configs/preprocessing.yaml`'s `tiling.downsample` controls magnification
@@ -576,60 +698,48 @@ python -m app.server --run artifacts/phase2_unet
 
 ## Where the project actually stands
 
-**Done and defensible:** Phase 1 preprocessing (measured, not assumed, at
-every stage that could silently go wrong); a working, tested Phase 2 training
-pipeline with an honest, documented account of the dataset's real
-limitations (no annotations → pseudo-labels; no slide IDs → an inferred,
-caveated split); Phase 4's conformal prediction (including the stain-shift-
-weighted generalization beyond the base paper), stain-variation analysis and
-offline CAP/ASCO mapping; a complete, tested, presentable frontend that a
-pathologist can actually use to compare the model against a classical
-control and record a judgement, with the "assistive tool, not autonomous
-scorer" framing enforced by tests rather than only stated in prose; Docker
-packaging (written, not yet verified — no Docker on the dev machine).
+The four objectives of the project (PHASE4.md, "Final status", 2026-10-03):
 
-**The architecture question is resolved.** Phase 2's SegFormer run and a
-later full-scale ResNet18-UNet run were compared head-to-head — identical
-data, split, and epoch count (see PHASE5.md). U-Net won on every single
-class, most dramatically on the class that mattered most: moderate (2+) went
-from an IoU of 0.00006 (SegFormer, effectively never predicted) to 0.589
-(U-Net). SegFormer has been removed from the codebase entirely, not kept
-alongside as a second option — `models/segformer_seg.py` is gone, and
-`models/__init__.py`'s `select_architecture` now recognises only `"unet"`.
-The `transformers`/`tokenizers`/`safetensors`/`hf-xet`/`huggingface_hub`
-dependency footprint that existed only to support SegFormer is gone from
-`requirements.txt` too — a genuine, not just cosmetic, deployment-efficiency
-win (U-Net is plain Conv2d/BatchNorm/ReLU, which exports to ONNX and
-quantizes far more predictably than an attention-based decoder would).
+| # | Objective | Status |
+|---|---|---|
+| 1 | Adaptive stain-vector analysis of stain variation across slides | **Done** (Macenko estimator, corrected 2026-10-01) |
+| 2 | Stain-shift-weighted conformal prediction under cross-institution shift | **Done**, evaluated on a real second institution; improves coverage (82 % → 92 % at a 95 % target) but does **not** fully restore it |
+| 3 | Map AI predictions to ASCO/CAP; agreement with expert ground truth | **Done** against the datasets' expert labels; agreement with local pathologists waits on real reviews |
+| 4 | Complete HER2 AI system with web interface and Docker | **Done and deployment-ready** (hosting is a hospital decision) |
 
-**Open, updated 2026-09-22:** moderate (2+) is resolved as *learnable* (it
-wasn't, under SegFormer; it is, under U-Net). At the 4-epoch baseline it was
-still the model's weakest class by a real margin — 0.589 IoU against
-0.67–0.89 for the other three stained classes — and three cheap levers were
-tried against it, each with a decision rule fixed before the result: inverse-
-frequency class weighting (`PHASE5_CLASS_WEIGHTS.md`, rejected), an ordinal-
-distance auxiliary loss (`PHASE5_ORDINAL.md`, rejected), and training for 8
-instead of 4 epochs (`PHASE5_8EPOCHS.md`, **adopted** — moderate 0.589 →
-0.657, every class improved, no regression elsewhere). Making that the actual
-shipped default (`configs/training.yaml`, `artifacts/phase2_unet`) is a
-deferred follow-up, not done yet. The frontend still flags the moderate row
-inline regardless, rather than treating any of this as "solved."
+**Done and defensible:** Phase 1 preprocessing (measured, not assumed, at every
+stage that could silently go wrong); the segmentation pipeline and an honest
+account of the dataset's limits (pseudo-labels, no slide IDs); the architecture
+decision (ResNet18-UNet over SegFormer, moderate 2+ IoU 0.00006 → 0.589 → 0.657
+with 8 epochs); the v2 multi-task pre-score model (92.3 % / QWK 0.975 in-domain)
+behind a site safety gate; cross-institution conformal prediction and stain
+analysis; cell-level ASCO/CAP evidence; ISH decision support; whole-slide
+analysis (tissue, ink and control-core exclusion, control calibration; tumour is not segmented); accounts, audit and an admin console; the
+pathologist review record; a gated continual-learning loop; Docker packaging
+verified in CI.
 
-Reframing 2+ as a per-cell membrane-completeness question rather than a
-tissue-area intensity question — the approach ASCO/CAP itself defines the
-score by — was prototyped as an offline, evaluation-only script
-(`scripts/evaluate_membrane_completeness.py`, `PHASE5_MEMBRANE_COMPLETENESS.md`).
-The honest result is mostly negative: about a third of validation tiles have
-no moderate class at all and are scored IoU 0.0, and that mechanical fact,
-not genuine model behaviour, produced most of the proxy's apparent
-correlation with moderate IoU; on tiles where moderate is actually present
-the correlation is near zero or negative. Not wired into the app, per the
-"no score in the live app" rule.
+**Honest limits, stated plainly:**
 
-**Still explicitly not started (at the codebase level):** whole-slide
-stitching (Phase 6 in the plan) and per-cell membrane analysis (Phase 0.5).
+* **Unseen-site accuracy is low.** At a hospital the model never trained on,
+  accuracy was 48–55 % (the in-domain 92.3 % does not transfer). This is the
+  reason the pre-score is withheld until a site is validated, and why 25 local
+  cases do not reliably fix it.
+* **Stain-shift weighting helps but does not restore coverage** (91.7 % at a
+  95 % target for the deployed model).
+* **Pseudo-labels and an inferred split** remain the basis of the segmentation
+  model; the validation split is leaky by construction.
+* **Whole-slide fields are not restricted to tumour.** Tumour is not segmented, so stroma,
+  in-situ carcinoma and normal ducts can be counted; the pathologist confirms the scored area.
+* **Control calibration is unvalidated on real controls**, and its default reference is a proxy.
+* **Moderate (2+) is the weakest class** for the stain map (IoU 0.657 with 8
+  epochs) and is flagged in the interface.
+* **No real pathologist reviews exist** (`artifacts/reviews.jsonl` is empty of real
+  entries) and **no ≥20× HER2 whole slide** has been analysed; Kottayam slides
+  are still not digitised. These are blocked on data, not engineering.
+* **Not a certified medical device.**
 
-**Still blocked on data no engineering effort can substitute for:** real
-pathologist reviews in `reviews.jsonl` (zero real entries exist; see
-`scripts/evaluate_cap_agreement.py`), and the Kottayam slides, still not
-digitized.
+**Small open follow-ups:** run 5–10 Kottayam slides in shadow mode for a pathologist to
+check the exclusions and fields; build a Kottayam-specific control reference
+(`scripts/build_control_reference.py --images ...`) and validate the control calibration
+on its control slides; re-time whole-slide analysis on the target hardware; delete the
+unused `artifacts/tumour/` weights when no longer wanted.

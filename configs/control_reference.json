@@ -1,0 +1,13 @@
+{
+  "level": "3+",
+  "source": "HER2-IHC-40x training site: 3+ patches of the fit split (a proxy for a 3+ control; never the holdout)",
+  "n_images": 40,
+  "built": "2026-10-06",
+  "dab_threshold": 0.25,
+  "p50": 0.96813,
+  "p75": 1.4323,
+  "p90": 1.81264,
+  "p95": 2.09584,
+  "p99": 3.24761,
+  "stained_pixels": 800000
+}

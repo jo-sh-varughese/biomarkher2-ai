@@ -120,7 +120,7 @@ real reviews yet.
 ### 4. Complete system, web interface, Docker
 
 Web portal (accounts and admin console, field analysis, whole slides with
-tumour detection, AI pre-score with prediction sets, ISH decision support and
+ink and control-core exclusion and per-slide control calibration (tumour is not segmented, docs/WHOLE_SLIDE.md), AI pre-score with prediction sets, ISH decision support and
 explanations, pathologist review records, PDF reports); `Dockerfile`
 (multi-stage: builds the portal, non-root, health check) and
 `docker-compose.yml`; `/api/health`; `scripts/package_models.sh` (model bundle

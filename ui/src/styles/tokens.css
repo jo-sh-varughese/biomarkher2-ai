@@ -121,7 +121,7 @@
 
   --text:          var(--slate-900);
   --text-2:        var(--slate-600);
-  --text-3:        var(--slate-500);
+  --text-3:        #5f6685;   /* 5.6:1 on white (slate-500 was 4.3:1, too faint for small text) */
   --text-inverse:  var(--slate-0);
 
   --accent:        var(--violet-600);
@@ -169,7 +169,7 @@
 
   --text:          #eef0f8;
   --text-2:        #a4abc8;
-  --text-3:        #7b83a3;
+  --text-3:        #8f97b6;
   --text-inverse:  #12152a;
 
   --accent:        var(--violet-400);

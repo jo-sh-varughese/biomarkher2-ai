@@ -1,1 +1,1 @@
-"""Whole-slide analysis: reading, tumour detection, slide-level pre-scoring and reports."""
+"""Whole-slide analysis: reading, tissue and exclusions, slide-level pre-scoring and reports."""

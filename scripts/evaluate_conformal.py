@@ -1,6 +1,6 @@
 """Sweep significance levels over the conformal predictor's held-out test half.
 
-    python scripts/evaluate_conformal.py --run artifacts/phase2_unet
+    python scripts/evaluate_conformal.py --run artifacts/phase2_unet_8epochs
 
 Reproduces the base paper's Section IV analysis (their Fig. 5-8): miscoverage
 rate, ambiguity rate and singleton accuracy at a grid of significance levels
@@ -70,7 +70,7 @@ CSV_FIELDS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", default="artifacts/phase2_unet")
+    parser.add_argument("--run", default="artifacts/phase2_unet_8epochs")
     parser.add_argument("--config", default="configs/training.yaml")
     parser.add_argument(
         "--cache",

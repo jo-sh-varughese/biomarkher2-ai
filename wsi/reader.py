@@ -8,7 +8,7 @@ pyramidal TIFF. Ordinary images (.png/.jpg/small .tif) open through
 
 Everything downstream asks for pixels at a PHYSICAL resolution (microns per
 pixel), never at a pyramid level: the pre-score model expects ~0.24 um/px,
-the tumour segmenter 0.5 um/px, the overview ~8 um/px, and which pyramid
+the control and ink checks 0.5-2 um/px, the overview ~8 um/px, and which pyramid
 level serves each best depends on the scanner.
 """
 

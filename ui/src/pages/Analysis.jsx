@@ -21,7 +21,7 @@ import { Link, useNavigate } from "react-router-dom";
 import Icon from "../components/Icon.jsx";
 import AnnotationLayer from "../components/AnnotationLayer.jsx";
 import ZoomViewer from "../components/ZoomViewer.jsx";
-import { CompareBars, Donut, HeatLegend, StackBar } from "../components/charts/Charts.jsx";
+import { HeatLegend, StackBar } from "../components/charts/Charts.jsx";
 import { usePortal } from "../state/PortalContext.jsx";
 import { useAuth } from "../state/AuthContext.jsx";
 import { useToast } from "../state/ToastContext.jsx";
@@ -50,6 +50,9 @@ import { resolveCaveats } from "../i18n/caveats.js";
    "ambiguity" only exists when a conformal calibration is loaded, and
    "isolate" only once a class is in focus (see focusName below), so the tab
    strip is filtered against what is actually available each render. */
+// Shown as tabs on the viewer; the other views sit in its "More views" list.
+const PRIMARY_VIEWS = ["original", "cells", "evidence", "isolate"];
+
 const VIEWS = [
   { key: "original", hasNote: true },
   { key: "tissue", hasNote: true },
@@ -79,6 +82,8 @@ export default function Analysis() {
   const [dragOver, setDragOver] = useState(false);
   const [running, setRunning] = useState(false);
   const [reporting, setReporting] = useState(false);
+  // Tumour site: the breast ASCO/CAP rules only apply to breast cancer.
+  const [site, setSite] = useState("breast");
   const [view, setView] = useState("model");
   const [compare, setCompare] = useState(false);
   // Drawing is a mode, not the default: with the layer always live, a swipe
@@ -88,7 +93,7 @@ export default function Analysis() {
   // The result is the AI pre-score + cell evidence panel; the stain-area
   // measurements support it and start folded so they are not read as a second
   // answer (a user saw "1+" here beside an AI "3+", 2026-10-02).
-  const [open, setOpen] = useState({ input: true, key: false, supporting: false });
+  const [detail, setDetail] = useState("decision");
 
   const dialogRef = useRef(null);
   const [zoomed, setZoomed] = useState(null);
@@ -147,8 +152,8 @@ export default function Analysis() {
     setRunning(true);
     try {
       const body = file
-        ? { image: await readFileAsDataURL(file), name: file.name }
-        : { patch_id: patchId };
+        ? { image: await readFileAsDataURL(file), name: file.name, specimen: site }
+        : { patch_id: patchId, specimen: site };
       if (!file && !patchId) throw new Error(t("toast.chooseFirst"));
 
       const data = await analyseField(body);
@@ -165,7 +170,9 @@ export default function Analysis() {
       setAnalysis(data);
       setLastRequest(body);
       setFocusName(nextFocus);
-      setView(nextFocus && data.isolate?.[nextFocus] ? "isolate" : "model");
+      // The pathologist reads the tissue first; the maps are one click away.
+      setView("original");
+      setDetail("decision");
       setCompare(false);
       setAnnotating(false);
       if (data.demo) {
@@ -178,7 +185,7 @@ export default function Analysis() {
     } finally {
       setRunning(false);
     }
-  }, [file, patchId, classes, setAnalysis, setLastRequest, toast, t]);
+  }, [file, patchId, site, classes, setAnalysis, setLastRequest, toast, t]);
 
   /* --------------------------------------------------- new analysis --- */
 
@@ -189,7 +196,7 @@ export default function Analysis() {
     setFocusName(null);
     setAnnotating(false);
     setCompare(false);
-    setOpen((o) => ({ ...o, input: true }));
+
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -207,11 +214,13 @@ export default function Analysis() {
     setReviewTarget({
       kind: "field",
       id: analysis.patch_id,
+      case_id: analysis.case_id,
       label: analysis.display_name || analysis.patch_id,
       image: analysis.images?.original,
       ai_prescore: analysis.ai_prescore,
       cell_evidence: analysis.cell_evidence,
       guidance: analysis.guidance,
+      quality: analysis.quality,
       measurements: {
         model: analysis.model_percentages,
         baseline: analysis.baseline_percentages,
@@ -229,6 +238,7 @@ export default function Analysis() {
       try {
         const result = await saveAnnotation({
           patch_id: analysis.patch_id,
+          case_id: analysis.case_id,
           x: region.x,
           y: region.y,
           w: region.w,
@@ -303,68 +313,279 @@ export default function Analysis() {
   const isolateImage = analysis?.isolate?.[focusName] ?? null;
   const caveats = resolveCaveats(analysis?.caveats, analysis?.demo, t);
 
-  const toggleSection = (key) => setOpen((o) => ({ ...o, [key]: !o[key] }));
 
   const openZoom = (key) => {
     setZoomed(key);
     dialogRef.current?.showModal();
   };
 
-  return (
-    <>
-      <div className="page__head">
-        <div>
-          <div className="eyebrow">{t("analysis.steps")}</div>
-          <h1>{t("analysis.title")}</h1>
-          <p className="lede">{t("analysis.lede")}</p>
+  /* The viewer's own tab strip carries the views a pathologist reaches for
+     first; the rest sit in one "More views" list, so ten equal-weight tabs no
+     longer compete for attention. */
+  const primaryViews = availableViews.filter((v) => PRIMARY_VIEWS.includes(v.key));
+  const moreViews = availableViews.filter((v) => !PRIMARY_VIEWS.includes(v.key));
+  const viewTitle = (key) =>
+    key === "isolate" ? t("analysis.views.isolate", { label: focusLabel ?? "" }) : t(`analysis.views.${key}`);
+  const annotations = analysis?.annotations ?? [];
+  const detailTabs = analysis
+    ? [
+        analysis.cell_evidence?.decision_support ? "decision" : null,
+        analysis.cell_evidence?.explanation ? "explain" : null,
+        "area",
+        "regions",
+        "limits",
+      ].filter(Boolean)
+    : [];
+  const activeDetail = detailTabs.includes(detail) ? detail : detailTabs[0];
+
+  const viewer = analysis ? (
+    <section className="card viewer">
+      <div className="viewer__bar">
+        <div className="viewer__tabs" role="tablist" aria-label={t("analysis.layers")}>
+          {primaryViews.map((v) => (
+            <button
+              key={v.key}
+              type="button"
+              role="tab"
+              aria-selected={!compare && view === v.key}
+              className={`viewer__tab${!compare && view === v.key ? " is-active" : ""}`}
+              onClick={() => {
+                setView(v.key);
+                setCompare(false);
+              }}
+            >
+              {v.key === "isolate" ? t("analysis.tabs.isolate", { label: focusLabel ?? "" }) : t(`analysis.tabs.${v.key}`)}
+            </button>
+          ))}
+          {moreViews.length ? (
+            <select
+              className={`viewer__more${moreViews.some((v) => v.key === view) && !compare ? " is-active" : ""}`}
+              aria-label={t("field.moreViews")}
+              value={moreViews.some((v) => v.key === view) ? view : ""}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                setView(e.target.value);
+                setCompare(false);
+              }}
+            >
+              <option value="">{t("field.moreViews")}…</option>
+              {moreViews.map((v) => (
+                <option key={v.key} value={v.key}>{viewTitle(v.key)}</option>
+              ))}
+            </select>
+          ) : null}
         </div>
-        <div className="page__actions">
+        <div className="viewer__tools">
           <button
             type="button"
-            className="btn"
-            onClick={exportReport}
-            disabled={!analysis || reporting}
-            {...(reporting ? { "data-busy": "" } : {})}
+            className={`tool tool--keep${annotating ? " is-on" : ""}`}
+            onClick={() => setAnnotating((v) => !v)}
+            aria-pressed={annotating}
+            disabled={compare || !canAnnotate}
+            title={canAnnotate ? t("analysis.annotate.toggleTitle") : t("roleGate.annotate")}
           >
-            <Icon name="download" size={16} /> {t("analysis.pdfReport")}
+            <Icon name="pen" size={15} />
+            <span>{t(annotating ? "analysis.annotate.done" : "analysis.annotate.toggle")}</span>
           </button>
-          <button
-            type="button"
-            className="btn btn--primary"
-            onClick={run}
-            disabled={running}
-            {...(running ? { "data-busy": "" } : {})}
-          >
-            <Icon name="scan" size={16} /> {t("analysis.analyse")}
+          {analysis.images.baseline ? (
+            <button
+              type="button"
+              className={`tool${compare ? " is-on" : ""}`}
+              onClick={() => {
+                setCompare((v) => !v);
+                setAnnotating(false);
+              }}
+              aria-pressed={compare}
+              title={t("analysis.compareTitle")}
+            >
+              <Icon name="layers" size={15} />
+              <span>{t("analysis.compare")}</span>
+            </button>
+          ) : null}
+          <button type="button" className="tool" onClick={() => openZoom(view)} title={t("analysis.enlarge")}>
+            <Icon name="search" size={15} />
+            <span>{t("analysis.enlarge")}</span>
           </button>
         </div>
       </div>
 
-      {analysis ? (
-        <section className="card current-field" aria-live="polite">
-          <span className="current-field__label">{t("analysis.current")}</span>
-          <b className="mono" title={analysis.patch_id}>{analysis.display_name || shortId(analysis.patch_id)}</b>
-          {analysis.dataset_label ? (
-            <span className="badge badge--outline">{t("analysis.sourceLabel", { label: analysis.dataset_label })}</span>
-          ) : null}
-          <button type="button" className="btn btn--sm current-field__new" onClick={newAnalysis}>
-            <Icon name="refresh" size={14} /> {t("analysis.another")}
-          </button>
-        </section>
-      ) : null}
+      <div className={`viewer__stage${annotating ? " is-annotating" : ""}`}>
+        {compare && analysis.images.baseline ? (
+          <Wipe base={analysis.images.model} top={analysis.images.baseline} alt={t("analysis.compareCaption")} />
+        ) : (
+          <div className="viewer__frame">
+            <img
+              ref={imgRef}
+              src={view === "isolate" ? isolateImage : analysis.images[view]}
+              alt={viewTitle(view)}
+              onClick={() => openZoom(view)}
+            />
+            <AnnotationLayer
+              imgRef={imgRef}
+              annotations={annotations}
+              reviewChoices={context?.review_choices}
+              onSave={saveFieldAnnotation}
+              disabled={!annotating}
+            />
+          </div>
+        )}
+        {annotating && !compare ? (
+          <span className="viewer__mode" role="status">
+            <Icon name="pen" size={13} /> {t("analysis.annotate.hint")}
+          </span>
+        ) : null}
+      </div>
 
-      <div className={`study${analysis ? "" : " study--empty"}`}>
-        {/* ------------------------------------------------- review rail --- */}
-        <div className="study__rail">
-          <section className="card" style={{ padding: "4px 18px" }}>
-            {/* --- input --- */}
-            <Section
-              id="input"
-              title={t("analysis.source")}
-              open={open.input}
-              onToggle={toggleSection}
-              badge={file ? <span className="badge badge--accent">{t("analysis.upload")}</span> : null}
-            >
+      <div className="viewer__caption">
+        <div className="viewer__caption-text">
+          <b>{compare ? t("analysis.compareCaption") : viewTitle(view)}</b>
+          <span>{compare ? t("analysis.compareNote") : viewNote(view, context, t)}</span>
+        </div>
+        {!compare && view === "heatmap" ? (
+          <HeatLegend legend={context?.heatmap_legend} title={t("analysis.heatLegend")} lowLabel={t("analysis.heatLow")} />
+        ) : null}
+        {compare || view === "model" || view === "baseline" ? (
+          <div className="legend legend--plain">
+            {classes
+              .filter((c) => c.index > 0)
+              .map((c) => (
+                <span key={c.name}>
+                  <i style={{ background: c.color }} />
+                  {c.name}
+                </span>
+              ))}
+          </div>
+        ) : null}
+        {!compare && view === "isolate" && focusClass ? (
+          <div className="legend legend--plain">
+            <span>
+              <i style={{ background: focusClass.color }} />
+              {focusClass.name} <b className="num">{pct(focusPercent)}</b>
+            </span>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  ) : null;
+
+  return (
+    <>
+      <div className="page__head page__head--compact">
+        <div>
+          <div className="eyebrow">{t("field.eyebrow")}</div>
+          <h1>{t("analysis.title")}</h1>
+          <p className="lede">{analysis ? t("field.ledeDone") : t("field.ledeEmpty")}</p>
+        </div>
+      </div>
+
+      {analysis ? (
+        <>
+          <section className="card current-field" aria-live="polite">
+            <span className="current-field__label">{t("analysis.current")}</span>
+            <b className="mono" title={analysis.patch_id}>{analysis.display_name || shortId(analysis.patch_id)}</b>
+            {analysis.dataset_label ? (
+              <span className="badge badge--outline">{t("analysis.sourceLabel", { label: analysis.dataset_label })}</span>
+            ) : null}
+          </section>
+
+          {/* Image and answer side by side: the pathologist reads the tissue
+              and the suggestion together, without scrolling between them. */}
+          <div className="result-top">
+            <div className="result-top__image">{viewer}</div>
+            <div className="result-top__answer">
+              <PrescorePanel analysis={analysis} />
+            </div>
+          </div>
+
+          <section className="card details" aria-labelledby="details-title">
+            <div className="details__head">
+              <h2 id="details-title">{t("field.detailsTitle")}</h2>
+              <div className="details__tabs" role="tablist">
+                {detailTabs.map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeDetail === key}
+                    className={`details__tab${activeDetail === key ? " is-active" : ""}`}
+                    onClick={() => setDetail(key)}
+                  >
+                    {t(`field.tabs.${key}`)}
+                    {key === "regions" && annotations.length ? <span className="details__count">{annotations.length}</span> : null}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="details__body" role="tabpanel">
+              {activeDetail === "decision" ? (
+                <DecisionPanel decision={analysis.cell_evidence.decision_support} guidance={analysis.guidance} />
+              ) : null}
+              {activeDetail === "explain" ? (
+                <ExplainPanel explanation={analysis.cell_evidence.explanation} onShowView={showView} />
+              ) : null}
+              {activeDetail === "area" ? (
+                <AreaDetails
+                  analysis={analysis}
+                  classes={classes}
+                  rows={rows}
+                  focusLabel={focusLabel}
+                  focusClass={focusClass}
+                  focusPercent={focusPercent}
+                  onFocus={(name) => {
+                    focusOn(name);
+                    document.querySelector(".viewer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }}
+                  caveats={caveats}
+                  t={t}
+                />
+              ) : null}
+              {activeDetail === "regions" ? (
+                annotations.length ? (
+                  <ul className="annot-list">
+                    {annotations.map((a, i) => (
+                      <li key={a.id ?? i}>
+                        <span className="annot-list__tag">{i + 1}</span>
+                        <div>
+                          {a.score ? <b>{a.score}</b> : null}
+                          {a.note ? <p>{a.note}</p> : null}
+                          <span className="tiny muted">
+                            {a.reviewer}
+                            {a.recorded_at ? ` · ${dateTime(a.recorded_at, locale)}` : ""}
+                          </span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="hint">{t("field.noRegions")}</p>
+                )
+              ) : null}
+              {activeDetail === "limits" ? (
+                <>
+                  <dl className="caveats">
+                    {["not_a_score", "denominator", "targets"].map((key) =>
+                      caveats[key] ? (
+                        <div key={key}>
+                          <dt>{t(`method.caveatTitles.${key}`)}</dt>
+                          <dd>{caveats[key]}</dd>
+                        </div>
+                      ) : null,
+                    )}
+                  </dl>
+                  <Link className="btn btn--ghost btn--sm" to="/method" style={{ marginTop: 12 }}>
+                    {t("analysis.fullMethod")} <Icon name="arrowRight" size={14} />
+                  </Link>
+                </>
+              ) : null}
+            </div>
+          </section>
+        </>
+      ) : (
+        <div className="study study--empty">
+          <div className="study__rail">
+            <section className="card card--pad source">
+              <h2 className="source__title">{t("analysis.source")}</h2>
               <div className="field">
                 <label htmlFor="patch">{t("analysis.samplePatch")}</label>
                 <select
@@ -385,15 +606,13 @@ export default function Analysis() {
                     <option value="">{t("analysis.noSamples")}</option>
                   )}
                 </select>
-                {sample && !file ? (
-                  <p className="hint">{t("analysis.sampleHint", { label: sample.folder_label })}</p>
-                ) : null}
+                {sample && !file ? <p className="hint">{t("analysis.sampleHint", { label: sample.folder_label })}</p> : null}
               </div>
 
               <div className="or-rule">{t("analysis.or")}</div>
 
               <label
-                className={`drop${dragOver ? " is-over" : ""}`}
+                className={`drop${dragOver ? " is-over" : ""}${file ? " has-file" : ""}`}
                 onDragOver={(e) => {
                   e.preventDefault();
                   setDragOver(true);
@@ -406,11 +625,7 @@ export default function Analysis() {
                   if (dropped) setFile(dropped);
                 }}
               >
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/tiff"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                />
+                <input type="file" accept="image/png,image/jpeg,image/tiff" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
                 <span className="drop__icon">
                   <Icon name="upload" size={22} />
                 </span>
@@ -423,508 +638,67 @@ export default function Analysis() {
                   <Icon name="x" size={14} /> {t("analysis.clearUpload")}
                 </button>
               ) : null}
-            </Section>
 
-            {/* --- key result --- */}
-            {analysis ? (
-              <Section
-                id="key"
-                title={t("analysis.keyResult")}
-                open={open.key}
-                onToggle={toggleSection}
-                badge={<span className="badge badge--outline">{t("analysis.measurement")}</span>}
+              <div className="field">
+                <label htmlFor="tumour-site">{t("analysis.tumourSite")}</label>
+                <select id="tumour-site" className="select" value={site} onChange={(e) => setSite(e.target.value)}>
+                  <option value="breast">{t("analysis.sites.breast")}</option>
+                  <option value="gastric">{t("analysis.sites.gastric")}</option>
+                  <option value="other">{t("analysis.sites.other")}</option>
+                </select>
+                <p className="hint">{t("analysis.tumourSiteHint")}</p>
+              </div>
+
+              <button
+                type="button"
+                className="btn btn--primary btn--lg btn--block"
+                onClick={run}
+                disabled={running}
+                {...(running ? { "data-busy": "" } : {})}
               >
-                <div className="key-result">
-                  <div className="eyebrow">
-                    {analysis.dataset_label
-                      ? t("analysis.sourceLabel", { label: analysis.dataset_label })
-                      : t("analysis.pickClassLabel")}
-                  </div>
-
-                  <div className="class-picker" role="group" aria-label={t("analysis.classPickerLabel")}>
-                    {LABEL_ORDER.map((label) => {
-                      const c = classForLabel(classes, label);
-                      return (
-                        <button
-                          type="button"
-                          key={label}
-                          className={`class-pick${focusLabel === label ? " is-active" : ""}`}
-                          style={{ "--pick-color": c?.color }}
-                          onClick={() => focusOn(c?.name ?? null)}
-                        >
-                          {t(`analysis.intensityNames.${label}`)}
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="key-result__value">
-                    <b style={{ "--mark": focusClass?.color }}>{focusLabel ? t(`analysis.intensityNames.${focusLabel}`) : "—"}</b>
-                    <span>{t("analysis.ofTissue", { pct: pct(focusPercent) })}</span>
-                  </div>
-
-                  {isolateImage ? (
-                    <button type="button" className="key-result__where" onClick={() => setView("isolate")}>
-                      <img src={isolateImage} alt="" />
-                      <span>
-                        {t("analysis.seeWhere")} <Icon name="arrowRight" size={12} />
-                      </span>
-                    </button>
-                  ) : null}
-
-                  <p className="hint" style={{ marginTop: 10 }}>
-                    {t("analysis.notAScoreLead")} <b>{t("analysis.notAScoreBold")}</b>
-                    {t("analysis.notAScoreRest")}
-                  </p>
-                </div>
-
-                <div style={{ display: "grid", gap: 10 }}>
-                  {/* StackBar scales its segments to fill the bar, so the model's
-                      unclassified tissue must be a segment of its own -- left out,
-                      every class was drawn larger than its share of the tissue. */}
-                  <StackBar
-                    segments={[
-                      ...rows.map((r) => ({ label: r.label, value: r.model, color: r.color })),
-                      ...(analysis.model_unclassified_percent
-                        ? [{ label: t("analysis.unclassified"), value: analysis.model_unclassified_percent, color: "var(--line)" }]
-                        : []),
-                    ]}
-                  />
-                  <div className="legend legend--plain">
-                    {rows.map((r) => (
-                      <span key={r.label}>
-                        <i style={{ background: r.color }} />
-                        {r.label} <b className="num">{pct(r.model)}</b>
-                      </span>
-                    ))}
-                    {analysis.model_unclassified_percent ? (
-                      <span>
-                        <i style={{ background: "var(--line)" }} />
-                        {t("analysis.unclassified")} <b className="num">{pct(analysis.model_unclassified_percent)}</b>
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-                  <Donut
-                    value={analysis.tissue_percent}
-                    label={`Tissue coverage ${pct(analysis.tissue_percent)}`}
-                  />
-                  <div>
-                    <div style={{ fontSize: "0.8125rem", fontWeight: 600 }}>{t("analysis.tissueCoverage")}</div>
-                    <p className="hint">
-                      {t("analysis.tissueCoverageNote", {
-                        pct: pct(analysis.tissue_percent),
-                        w: analysis.width,
-                        h: analysis.height,
-                      })}
-                    </p>
-                  </div>
-                </div>
-              </Section>
-            ) : null}
-
-            {/* --- supporting --- */}
-            {analysis ? (
-              <Section
-                id="supporting"
-                title={t("analysis.supporting")}
-                open={open.supporting}
-                onToggle={toggleSection}
-              >
-                <CompareBars rows={rows} modelLabel={t("table.model")} baselineLabel={t("table.baseline")} />
-
-                <div className="note note--caveat">
-                  <span className="note__icon">
-                    <Icon name="alert" size={15} />
-                  </span>
-                  <span>{caveats.model_limitation}</span>
-                </div>
-
-                <div style={{ display: "grid", gap: 10 }}>
-                  <Stat
-                    label={t("analysis.disagreement")}
-                    value={pct(analysis.disagreement_percent)}
-                    hint={t("analysis.disagreementHint")}
-                  />
-                  {analysis.conformal?.available ? (
-                    <Stat
-                      label={t("analysis.ambiguous", { alpha: analysis.conformal.alpha })}
-                      value={pct(analysis.conformal.ambiguous_percent)}
-                      hint={t("analysis.ambiguousHint")}
-                    />
-                  ) : null}
-                </div>
-
-                {analysis.conformal?.stale_calibration ? (
-                  <div className="note note--danger" role="alert">
-                    <span className="note__icon">
-                      <Icon name="alert" size={16} />
-                    </span>
-                    <span>
-                      {t("analysis.staleCalibration")}{" "}
-                      <span className="mono">scripts/calibrate_conformal.py</span>
-                    </span>
-                  </div>
-                ) : null}
-              </Section>
-            ) : null}
-
-          </section>
-        </div>
-
-        {/* ------------------------------------------------------ imagery --- */}
-        <div className="study__main">
-          {analysis ? <PrescorePanel analysis={analysis} /> : null}
-          {analysis?.cell_evidence?.decision_support ? (
-            <DecisionPanel decision={analysis.cell_evidence.decision_support} guidance={analysis.guidance} />
-          ) : null}
-          {analysis?.cell_evidence?.explanation ? (
-            <ExplainPanel explanation={analysis.cell_evidence.explanation} onShowView={showView} />
-          ) : null}
-          <section className="card viewer">
-            {analysis ? (
-              <>
-                <div className="viewer__bar">
-                  <div className="viewer__tabs" role="tablist" aria-label={t("analysis.layers")}>
-                    {availableViews.map((v) => (
-                      <button
-                        key={v.key}
-                        type="button"
-                        role="tab"
-                        aria-selected={!compare && view === v.key}
-                        className={`viewer__tab${!compare && view === v.key ? " is-active" : ""}`}
-                        onClick={() => {
-                          setView(v.key);
-                          setCompare(false);
-                        }}
-                      >
-                        {v.key === "isolate"
-                          ? t("analysis.tabs.isolate", { label: focusLabel ?? "" })
-                          : t(`analysis.tabs.${v.key}`)}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="viewer__tools">
-                    <button
-                      type="button"
-                      className={`tool tool--keep${annotating ? " is-on" : ""}`}
-                      onClick={() => setAnnotating((v) => !v)}
-                      aria-pressed={annotating}
-                      disabled={compare || !canAnnotate}
-                      title={canAnnotate ? t("analysis.annotate.toggleTitle") : t("roleGate.annotate")}
-                    >
-                      <Icon name="pen" size={15} />
-                      <span>{t(annotating ? "analysis.annotate.done" : "analysis.annotate.toggle")}</span>
-                    </button>
-                    {analysis.images.baseline ? (
-                      <button
-                        type="button"
-                        className={`tool${compare ? " is-on" : ""}`}
-                        onClick={() => {
-                          setCompare((v) => !v);
-                          setAnnotating(false);
-                        }}
-                        aria-pressed={compare}
-                        title={t("analysis.compareTitle")}
-                      >
-                        <Icon name="layers" size={15} />
-                        <span>{t("analysis.compare")}</span>
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="tool tool--icon"
-                      onClick={() => openZoom(view)}
-                      aria-label={t("analysis.enlarge")}
-                      title={t("analysis.enlarge")}
-                    >
-                      <Icon name="search" size={15} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className={`viewer__stage${annotating ? " is-annotating" : ""}`}>
-                  {compare && analysis.images.baseline ? (
-                    <Wipe
-                      base={analysis.images.model}
-                      top={analysis.images.baseline}
-                      alt={t("analysis.compareCaption")}
-                    />
-                  ) : (
-                    <div className="viewer__frame">
-                      <img
-                        ref={imgRef}
-                        src={view === "isolate" ? isolateImage : analysis.images[view]}
-                        alt={
-                          view === "isolate"
-                            ? t("analysis.views.isolate", { label: focusLabel ?? "" })
-                            : t(`analysis.views.${view}`)
-                        }
-                        onClick={() => openZoom(view)}
-                      />
-                      <AnnotationLayer
-                        imgRef={imgRef}
-                        annotations={analysis.annotations ?? []}
-                        reviewChoices={context?.review_choices}
-                        onSave={saveFieldAnnotation}
-                        disabled={!annotating}
-                      />
-                    </div>
-                  )}
-                  {annotating && !compare ? (
-                    <span className="viewer__mode" role="status">
-                      <Icon name="pen" size={13} /> {t("analysis.annotate.hint")}
-                    </span>
-                  ) : null}
-                </div>
-
-                <div className="viewer__caption">
-                  <div className="viewer__caption-text">
-                    <b>
-                      {compare
-                        ? t("analysis.compareCaption")
-                        : view === "isolate"
-                          ? t("analysis.views.isolate", { label: focusLabel ?? "" })
-                          : t(`analysis.views.${view}`)}
-                    </b>
-                    <span>{compare ? t("analysis.compareNote") : viewNote(view, context, t)}</span>
-                  </div>
-                  {!compare && view === "heatmap" ? (
-                    <HeatLegend
-                      legend={context?.heatmap_legend}
-                      title={t("analysis.heatLegend")}
-                      lowLabel={t("analysis.heatLow")}
-                    />
-                  ) : null}
-                  {compare || view === "model" || view === "baseline" ? (
-                    <div className="legend legend--plain">
-                      {classes
-                        .filter((c) => c.index > 0)
-                        .map((c) => (
-                          <span key={c.name}>
-                            <i style={{ background: c.color }} />
-                            {c.name}
-                          </span>
-                        ))}
-                    </div>
-                  ) : null}
-                  {!compare && view === "isolate" && focusClass ? (
-                    <div className="legend legend--plain">
-                      <span>
-                        <i style={{ background: focusClass.color }} />
-                        {focusClass.name} <b className="num">{pct(focusPercent)}</b>
-                      </span>
-                    </div>
-                  ) : null}
-                </div>
-              </>
-            ) : (
+                <Icon name="scan" size={18} /> {t("analysis.analyse")}
+              </button>
+            </section>
+          </div>
+          <div className="study__main">
+            <section className="card viewer">
               <div className="empty">
                 <span className="empty__art">
                   <Icon name="scan" size={30} strokeWidth={1.5} />
                 </span>
                 <h3>{t("analysis.emptyTitle")}</h3>
-                <p>{t("analysis.emptyBody")}</p>
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  onClick={run}
-                  disabled={running}
-                  {...(running ? { "data-busy": "" } : {})}
-                >
-                  <Icon name="scan" size={16} /> {t("analysis.analyse")}
-                </button>
+                <p>{t("field.emptyBody")}</p>
               </div>
-            )}
-          </section>
-
-          {analysis ? (
-            <section className="card card--pad">
-              <div className="card-head">
-                <div>
-                  <h2>{t("analysis.tableTitle")}</h2>
-                  <p className="sub">{t("analysis.tableSub")}</p>
-                </div>
-                <span className="badge badge--outline">
-                  {analysis.width}×{analysis.height}
-                </span>
-              </div>
-
-              <div className="table-wrap">
-                <table className="data data--stack">
-                  <thead>
-                    <tr>
-                      <th scope="col">{t("table.intensityClass")}</th>
-                      <th scope="col" className="num">{t("table.model")}</th>
-                      <th scope="col" className="num">{t("table.baseline")}</th>
-                      <th scope="col" className="num">{t("table.difference")}</th>
-                      <th scope="col">{t("table.share")}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <tr key={row.label} className={row.flagged ? "is-flagged" : undefined}>
-                        <td data-label={t("table.intensityClass")}>
-                          <span className="swatch" style={{ background: row.color }} />
-                          {row.label}
-                          {row.flagged ? (
-                            <span className="badge badge--warn" style={{ marginLeft: 8 }}>
-                              {t("analysis.leastReliable")}
-                            </span>
-                          ) : null}
-                        </td>
-                        <td className="num" data-label={t("table.model")}>{pct(row.model, 2)}</td>
-                        <td className="num" data-label={t("table.baseline")}>{pct(row.baseline, 2)}</td>
-                        <td
-                          data-label={t("table.difference")}
-                          className={`num delta ${
-                            Math.abs(row.delta) < 0.005
-                              ? "delta--zero"
-                              : row.delta > 0
-                                ? "delta--up"
-                                : "delta--down"
-                          }`}
-                        >
-                          {signed(row.delta)}
-                        </td>
-                        {/* Decoration only -- the same number is in the Model
-                            cell, so it is dropped rather than stacked. */}
-                        <td style={{ minWidth: 120 }} data-hide-sm="" data-label={t("table.share")}>
-                          <div
-                            style={{
-                              height: 6,
-                              borderRadius: 99,
-                              background: "var(--surface-sunken)",
-                              overflow: "hidden",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: `${Math.min(100, row.model)}%`,
-                                height: "100%",
-                                background: row.color,
-                                borderRadius: 99,
-                              }}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {analysis.model_unclassified_percent ? (
-                      <tr className="row-muted">
-                        <td data-label={t("table.intensityClass")}>
-                          <span className="swatch" style={{ background: "var(--line)" }} />
-                          {t("analysis.unclassified")}
-                        </td>
-                        <td className="num" data-label={t("table.model")}>{pct(analysis.model_unclassified_percent, 2)}</td>
-                        <td className="num" data-label={t("table.baseline")}>{pct(0, 2)}</td>
-                        <td className="num" data-label={t("table.difference")} />
-                        <td data-hide-sm="" />
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-
-              {analysis.model_unclassified_percent ? (
-                <p className="hint" style={{ marginTop: 10 }}>
-                  {t("analysis.unclassifiedNote", { pct: pct(analysis.model_unclassified_percent) })}
-                </p>
-              ) : null}
-              <p className="hint" style={{ marginTop: 14 }}>
-                {t("analysis.summary", { pct: pct(analysis.disagreement_percent) })}
-                {analysis.conformal?.available
-                  ? t("analysis.summaryConformal", {
-                      alpha: analysis.conformal.alpha,
-                      pct: pct(analysis.conformal.ambiguous_percent),
-                    })
-                  : ""}
-              </p>
             </section>
-          ) : null}
-
-          {/* The marked regions, listed rather than only findable by hunting
-              for their (small, easy to miss) numbered boxes on the image. */}
-          {analysis && (analysis.annotations ?? []).length ? (
-            <section className="card card--pad">
-              <div className="card-head">
-                <div>
-                  <h2>{t("analysis.annotate.title")}</h2>
-                  <p className="sub">{t("analysis.annotate.listSub")}</p>
-                </div>
-                <span className="badge badge--outline">{analysis.annotations.length}</span>
-              </div>
-              <ul className="annot-list">
-                {analysis.annotations.map((a, i) => (
-                  <li key={a.id ?? i}>
-                    <span className="annot-list__tag">{i + 1}</span>
-                    <div>
-                      {a.score ? <b>{a.score}</b> : null}
-                      {a.note ? <p>{a.note}</p> : null}
-                      <span className="tiny muted">
-                        {a.reviewer}
-                        {a.recorded_at ? ` · ${dateTime(a.recorded_at, locale)}` : ""}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-
-          {/* The caveats travel with the measurements. Keeping them on the
-              same screen -- not one page away -- is the whole reason the
-              original single-page tool put them at the foot of the results. */}
-          {analysis ? (
-            <section className="card card--pad">
-              <div className="card-head">
-                <div>
-                  <h2>{t("analysis.caveatsTitle")}</h2>
-                  <p className="sub">{t("analysis.caveatsSub")}</p>
-                </div>
-                <Link className="btn btn--ghost btn--sm" to="/method">
-                  {t("analysis.fullMethod")} <Icon name="arrowRight" size={14} />
-                </Link>
-              </div>
-              <dl className="caveats">
-                {["not_a_score", "denominator", "targets"].map((key) =>
-                  caveats[key] ? (
-                    <div key={key}>
-                      <dt>{t(`method.caveatTitles.${key}`)}</dt>
-                      <dd>{caveats[key]}</dd>
-                    </div>
-                  ) : null,
-                )}
-              </dl>
-            </section>
-          ) : null}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* --------------------------------------------------- action bar --- */}
       {analysis ? (
         <div className="actionbar" role="toolbar" aria-label={t("review.title")}>
           <div className="actionbar__info">
-            {analysis.ai_prescore?.shown && analysis.ai_prescore?.prescore ? (
+            {analysis.quality?.assessable === false ? (
+              <b className="actionbar__blocked">{t("prescore.notAssessableShort")}</b>
+            ) : null}
+            {analysis.quality?.assessable !== false && analysis.ai_prescore?.shown && analysis.ai_prescore?.prescore ? (
               <>
                 <span className="tiny muted">{t("prescore.label")}</span>{" "}
                 <b>IHC {analysis.ai_prescore.prescore.category}</b>
               </>
             ) : null}
-            {analysis.cell_evidence ? (
+            {analysis.cell_evidence?.field_category ? (
               <span className="actionbar__score">
                 {" "}· {t("review.cellEvidence")} IHC {analysis.cell_evidence.field_category}
               </span>
             ) : null}
-            {analysis.guidance?.ish ? (
+            {analysis.guidance?.ish && analysis.quality?.assessable !== false ? (
               <span className="actionbar__score"> · {t(`prescore.ish.${analysis.guidance.ish.level}`)}</span>
             ) : null}
           </div>
           <div className="actionbar__buttons">
             <button type="button" className="btn" onClick={newAnalysis}>
-              <Icon name="refresh" size={16} /> {t("analysis.newAnalysis")}
+              <Icon name="refresh" size={16} /> {t("analysis.another")}
             </button>
             <button type="button" className="btn" onClick={exportReport} disabled={reporting}
               {...(reporting ? { "data-busy": "" } : {})}>
@@ -978,43 +752,7 @@ export default function Analysis() {
 
 /* -------------------------------------------------------------- pieces --- */
 
-function Section({ id, title, open, onToggle, badge, children }) {
-  return (
-    <div className="acc" data-open={open}>
-      <button type="button" className="acc__btn" onClick={() => onToggle(id)} aria-expanded={open}>
-        <span className="acc__chev">
-          <Icon name="chevronRight" size={14} />
-        </span>
-        {title}
-        {badge ? <span className="acc__badge">{badge}</span> : null}
-      </button>
-      {open ? <div className="acc__body">{children}</div> : null}
-    </div>
-  );
-}
 
-function Stat({ label, value, hint }) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "baseline",
-        justifyContent: "space-between",
-        gap: 12,
-        paddingBottom: 10,
-        borderBottom: "1px solid var(--line-soft)",
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: "0.75rem", fontWeight: 600 }}>{label}</div>
-        <p className="hint">{hint}</p>
-      </div>
-      <div className="num" style={{ fontSize: "1.05rem", fontWeight: 800, letterSpacing: "-0.03em" }}>
-        {value}
-      </div>
-    </div>
-  );
-}
 
 /* A draggable wipe between two registered images. Pointer events cover mouse,
    pen and touch in one path, and setPointerCapture keeps the drag alive when
@@ -1059,4 +797,120 @@ function viewNote(key, context, t) {
   return t("analysis.modelNote", {
     arch: arch ? arch.toUpperCase() : t("analysis.theModel"),
   });
+}
+
+/* The stained-area measurements, in one place: which intensity class to show
+   on the image, the shares of tissue, the model beside the threshold
+   baseline, and the caveat for 2+. A measurement of AREA, kept apart from the
+   AI pre-score so it is not read as a second answer. */
+function AreaDetails({ analysis, classes, rows, focusLabel, focusClass, focusPercent, onFocus, caveats, t }) {
+  return (
+    <div className="area">
+      <p className="area__lead">{t("field.areaLead")}</p>
+      <p className="hint">
+        {t("field.tissueLine", { pct: pct(analysis.tissue_percent), w: analysis.width, h: analysis.height })}
+      </p>
+
+      <div className="area__pick">
+        <span className="area__picklabel">{t("field.inspect")}:</span>
+        <div className="class-picker" role="group" aria-label={t("analysis.classPickerLabel")}>
+          {LABEL_ORDER.map((label) => {
+            const c = classForLabel(classes, label);
+            return (
+              <button
+                type="button"
+                key={label}
+                className={`class-pick${focusLabel === label ? " is-active" : ""}`}
+                style={{ "--pick-color": c?.color }}
+                onClick={() => onFocus(c?.name ?? null)}
+              >
+                {t(`analysis.intensityNames.${label}`)}
+              </button>
+            );
+          })}
+        </div>
+        {focusClass ? (
+          <span className="area__focus">
+            <i style={{ background: focusClass.color }} /> {t("analysis.ofTissue", { pct: pct(focusPercent) })}
+          </span>
+        ) : null}
+      </div>
+
+      <StackBar
+        segments={[
+          ...rows.map((r) => ({ label: r.label, value: r.model, color: r.color })),
+          ...(analysis.model_unclassified_percent
+            ? [{ label: t("analysis.unclassified"), value: analysis.model_unclassified_percent, color: "var(--line)" }]
+            : []),
+        ]}
+      />
+
+      <div className="table-wrap">
+        <table className="data">
+          <thead>
+            <tr>
+              <th scope="col">{t("table.intensityClass")}</th>
+              <th scope="col" className="num">{t("table.model")}</th>
+              <th scope="col" className="num">{t("table.baseline")}</th>
+              <th scope="col" className="num">{t("table.difference")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.label} className={row.flagged ? "is-flagged" : undefined}>
+                <td>
+                  <span className="swatch" style={{ background: row.color }} />
+                  {row.label}
+                  {row.flagged ? (
+                    <span className="badge badge--warn" style={{ marginLeft: 8 }}>
+                      {t("analysis.leastReliable")}
+                    </span>
+                  ) : null}
+                </td>
+                <td className="num">{pct(row.model, 1)}</td>
+                <td className="num">{pct(row.baseline, 1)}</td>
+                <td className={`num delta ${Math.abs(row.delta) < 0.05 ? "delta--zero" : row.delta > 0 ? "delta--up" : "delta--down"}`}>
+                  {signed(row.delta)}
+                </td>
+              </tr>
+            ))}
+            {analysis.model_unclassified_percent ? (
+              <tr className="row-muted">
+                <td>
+                  <span className="swatch" style={{ background: "var(--line)" }} />
+                  {t("analysis.unclassified")}
+                </td>
+                <td className="num">{pct(analysis.model_unclassified_percent, 1)}</td>
+                <td className="num">{pct(0, 1)}</td>
+                <td className="num" />
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="hint">
+        {t("analysis.summary", { pct: pct(analysis.disagreement_percent) })}
+        {analysis.conformal?.available
+          ? t("analysis.summaryConformal", { alpha: analysis.conformal.alpha, pct: pct(analysis.conformal.ambiguous_percent) })
+          : ""}
+      </p>
+
+      <div className="note note--caveat">
+        <span className="note__icon">
+          <Icon name="alert" size={15} />
+        </span>
+        <span>{caveats.model_limitation}</span>
+      </div>
+
+      {analysis.conformal?.stale_calibration ? (
+        <div className="note note--danger" role="alert">
+          <span className="note__icon">
+            <Icon name="alert" size={16} />
+          </span>
+          <span>{t("analysis.staleCalibration")} <span className="mono">scripts/calibrate_conformal.py</span></span>
+        </div>
+      ) : null}
+    </div>
+  );
 }

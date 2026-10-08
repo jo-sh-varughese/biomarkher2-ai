@@ -66,17 +66,6 @@ rm -f /workspace/dl/*.zip   # free container disk
 # ---------------------------------------------------------------- runs
 first=1
 for CFG in "$@"; do
-  if grep -q '^tiger_root:' "$CFG"; then   # invasive-tumour segmenter (scripts/train_tumour.py)
-    NAME=$(basename "$CFG" .yaml)
-    echo "[$(date +%T)] ===== $CFG ($NAME) ====="
-    bash scripts/pod/fetch_tiger.sh
-    python scripts/train_tumour.py --config "$CFG" || echo "[$(date +%T)] $NAME FAILED (exit $?)"
-    OUTD=$(python -c "import yaml;print(yaml.safe_load(open('$CFG'))['output_dir'])")
-    tar -czf "/workspace/results_$NAME.tgz" "$OUTD" /workspace/logs 2>/dev/null
-    echo "[$(date +%T)] packaged /workspace/results_$NAME.tgz ($(du -h /workspace/results_$NAME.tgz | cut -f1))"
-    first=0
-    continue
-  fi
   NAME=$(python -c "import sys;sys.path.insert(0,'scripts');from train_v2 import load_config;print(load_config('$CFG')['run_name'])")
   echo "[$(date +%T)] ===== $CFG ($NAME) ====="
   if python -c "import sys;sys.path.insert(0,'scripts');from train_v2 import load_config;sys.exit(0 if ('adapt' in load_config('$CFG') or 'fewshot' in load_config('$CFG')) else 1)"; then
