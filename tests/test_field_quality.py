@@ -331,7 +331,7 @@ def test_analyze_endpoint_rejects_corrupt_uploads_and_refuses_non_breast(analyze
 
 
 def test_pdf_report_of_a_not_assessable_field_says_so_and_has_no_grade(analyzer):
-    import pymupdf
+    from pypdf import PdfReader
 
     from app.report import build_report_pdf_bytes
 
@@ -340,6 +340,6 @@ def test_pdf_report_of_a_not_assessable_field_says_so_and_has_no_grade(analyzer)
         result = analyzer.analyze(rng.integers(0, 256, (512, 512, 3), dtype=np.uint8), patch_id="noise.png").to_dict()
     finally:
         analyzer.quality_gate = False
-    text = " ".join(page.get_text() for page in pymupdf.open(stream=build_report_pdf_bytes(result), filetype="pdf"))
+    text = " ".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(build_report_pdf_bytes(result))).pages)
     assert "NOT ASSESSABLE" in text and "pixel noise" in text
     assert "IHC 3+" not in text and "IHC None" not in text
