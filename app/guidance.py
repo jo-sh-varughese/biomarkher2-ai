@@ -37,14 +37,43 @@ def _distance(a: str | None, b: str | None) -> int | None:
     return abs(GRADES.index(a) - GRADES.index(b))
 
 
+# What to do about each reason a field cannot be scored (app/field_quality.py codes).
+QUALITY_ACTIONS = {
+    "too_small": "Capture a larger field (at least 256 px per side; a full 40x field is best).",
+    "too_dark": "Recapture the field with correct exposure in brightfield.",
+    "noise": "Upload the scanned or photographed field itself, not a processed or synthetic image.",
+    "graphics": "Upload the original image without annotations, overlays or screen elements.",
+    "greyscale": "Upload the colour image: HER2 is read from brown DAB against the blue counterstain.",
+    "no_structure": "Upload a field of stained tissue.",
+    "not_ihc": "Use the HER2 immunostained section (DAB, brown), not the H&E slide.",
+    "marker": "Choose a field free of marking ink and annotations.",
+    "nuclear_stain": "Check the slide: HER2 must be a membranous stain. Use the HER2 slide, not ER, PR or Ki-67.",
+    "little_tissue": "Choose a field filled with invasive tumour.",
+    "few_cells": "Choose a field with more invasive tumour cells, or score several fields.",
+    "out_of_focus": "Refocus or rescan the slide, then analyse again.",
+    "not_breast": "Score with the HER2 criteria for that tumour type (e.g. gastric ASCO/CAP/ASCP guideline); "
+                  "this tool implements the breast rules only.",
+}
+
+
 def recommend(prescore: dict | None, cells: dict, gate: dict, extra_flags: list[str] | None = None,
-              assessable: bool = True, near_2plus: bool = False) -> dict:
+              assessable: bool = True, near_2plus: bool = False, quality: dict | None = None) -> dict:
     """``prescore``: PrescoreResult.public() when it may be used, else None. ``cells``: app.cells summary.
 
     ``assessable=False`` (e.g. a slide scanned below ~20x) never yields a grade-based
     suggestion: an unassessable slide must not read as "ISH not indicated".
     """
+    if quality is not None and not quality.get("assessable", True):
+        blocking = [r for r in quality["reasons"] if r["level"] == "block"]
+        steps = list(dict.fromkeys(QUALITY_ACTIONS.get(r["code"], "Choose another field.") for r in blocking))
+        return {"basis": "field quality", "suggested_range": "Not assessable",
+                "ish": {"level": "not_applicable",
+                        "text": "No score and no ISH suggestion: this image cannot be scored for HER2. " + blocking[0]["text"]},
+                "cautions": [r["text"] for r in quality["reasons"]], "next_steps": steps,
+                "not_assessable": True, "caveat": GUIDANCE_CAVEAT}
     flags = list(cells.get("flags", [])) + list(extra_flags or [])
+    if quality is not None:
+        flags += [r["text"] for r in quality["reasons"] if r["level"] == "caution" and r["code"] != "few_cells"]
     cell_grade = cells.get("field_category")
     steps: list[str] = []
     cautions: list[str] = []

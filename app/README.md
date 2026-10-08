@@ -4,7 +4,7 @@ A local web viewer for the Phase 2 model, meant to be shown to a pathologist
 and demonstrated in a presentation.
 
 ```
-python -m app.server --run artifacts/phase2_unet
+python -m app.server --run artifacts/phase2_unet_8epochs
 ```
 
 Then open <http://127.0.0.1:8000>. Standard library only — no Flask, no
@@ -80,7 +80,7 @@ API: no score, verdict or diagnosis field, anywhere.
 ## Options
 
 ```
---run            run directory containing best.pt   (default artifacts/phase2_unet)
+--run            run directory containing best.pt   (default artifacts/phase2_unet_8epochs)
 --config         training config                    (default configs/training.yaml)
 --preprocessing  preprocessing config               (default configs/preprocessing.yaml)
 --patch-root     dataset root for the examples      (default data/raw)

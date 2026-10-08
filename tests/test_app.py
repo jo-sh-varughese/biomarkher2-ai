@@ -212,7 +212,11 @@ def analyzer(tmp_path_factory):
         {"model_state": model.state_dict(), "epoch": 1, "caveat": "test"},
         root / "best.pt",
     )
-    return Analyzer(root, root / "training.yaml", "configs/preprocessing.yaml")
+    analyzer = Analyzer(root, root / "training.yaml", "configs/preprocessing.yaml")
+    # These tests exercise rendering and framing on toy synthetic patches, which
+    # the field-quality gate (tests/test_field_quality.py) rightly rejects.
+    analyzer.quality_gate = False
+    return analyzer
 
 
 def test_prediction_covers_an_image_that_is_not_a_multiple_of_the_tile(analyzer):
@@ -381,7 +385,9 @@ def _build_conformal_analyzer(tmp_path_factory, name: str, *, matching_epoch: bo
         ),
         encoding="utf-8",
     )
-    return Analyzer(root, root / "training.yaml", "configs/preprocessing.yaml")
+    analyzer = Analyzer(root, root / "training.yaml", "configs/preprocessing.yaml")
+    analyzer.quality_gate = False  # toy synthetic patches; the gate is tested in test_field_quality.py
+    return analyzer
 
 
 @pytest.fixture(scope="module")

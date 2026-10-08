@@ -34,6 +34,7 @@ const TITLE_KEYS = {
   "/admin/audit": "admin.nav.audit",
   "/admin/settings": "admin.nav.settings",
   "/admin/system": "admin.nav.system",
+  "/admin/learning": "learning.nav",
 };
 
 /* The page name for the breadcrumb: /admin/users/usr_... is still Users. */
@@ -152,7 +153,7 @@ export default function Topbar({ onOpenNav, onToggleRail, railCollapsed }) {
             if (event.key === "Enter") navigate(`/cases?q=${encodeURIComponent(event.target.value)}`);
           }}
         />
-        <kbd>⌘K</kbd>
+        <kbd>{/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? "⌘K" : "Ctrl K"}</kbd>
       </div>
 
       <div className="topbar__tools">

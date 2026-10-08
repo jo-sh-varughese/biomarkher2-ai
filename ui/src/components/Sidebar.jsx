@@ -123,16 +123,16 @@ export default function Sidebar({ open, collapsed, onClose }) {
                   panel reads as if the stain map produced the pre-score. */}
               <div className="rail-status__row">
                 <dt>{t("common.prescoreModel")}</dt>
-                <dd title={context?.prescore_model?.checkpoint}>
+                <dd title={context?.prescore_model ? `${context.prescore_model.encoder ?? ""} · ${t("common.epochShort", { n: context.prescore_model.epoch })}` : undefined}>
                   {context?.prescore_model
-                    ? `${context.prescore_model.encoder ?? ""} · ${t("common.epochShort", { n: context.prescore_model.epoch })}`
+                    ? t("common.ready")
                     : "—"}
                 </dd>
               </div>
               <div className="rail-status__row">
                 <dt>{t("common.stainModel")}</dt>
-                <dd title={provenance?.run}>
-                  {provenance?.run ? `${runName(provenance.run)} · ${t("common.epochShort", { n: provenance.epoch })}` : "—"}
+                <dd title={provenance?.run ? `${runName(provenance.run)} · ${t("common.epochShort", { n: provenance.epoch })}` : undefined}>
+                  {provenance?.run ? t("common.ready") : "—"}
                 </dd>
               </div>
             </dl>

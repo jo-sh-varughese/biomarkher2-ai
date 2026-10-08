@@ -47,8 +47,8 @@ jobs:
       - name: Server code and dependencies import inside the image
         run: |
           docker run --rm --entrypoint python biomarkher2:ci -c "
-          import app.server, app.analysis, app.report, app.decision, app.explain, app.review_record
-          import wsi.analysis, wsi.tumour, wsi.reader, wsi.report, wsi.server_routes
+          import app.server, app.analysis, app.report, app.decision, app.explain, app.review_record, app.field_quality, app.image_io
+          import wsi.analysis, wsi.reader, wsi.report, wsi.server_routes
           import training.v2_engine, evaluation.safety_gate
           import openslide, torch, torchvision, sklearn, skimage, reportlab
           import pathlib

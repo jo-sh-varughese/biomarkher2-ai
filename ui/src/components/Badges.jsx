@@ -1,11 +1,11 @@
 import Icon from "./Icon.jsx";
-import { classForLabel, isCannotAssess } from "../lib/format.js";
+import { classForLabel, GRADE_COLOR, isCannotAssess } from "../lib/format.js";
 
 /** A recorded HER2 assessment: its class-colour mark beside the score, or the
     translated "Cannot assess" whatever wording the log stored it in. */
 export function ScoreBadge({ score, classes, t }) {
   if (isCannotAssess(score)) return <span className="badge badge--outline">{t("analysis.cannotAssess")}</span>;
-  const color = classForLabel(classes, score)?.color;
+  const color = GRADE_COLOR[score] ?? classForLabel(classes, score)?.color;
   return (
     <span className="badge badge--score">
       <i style={{ background: color ?? "var(--accent)" }} />

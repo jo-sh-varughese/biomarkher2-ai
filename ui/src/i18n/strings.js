@@ -43,9 +43,10 @@ export const STRINGS = {
       run: "Run",
       epoch: "Epoch",
       epochShort: "ep. {n}",
+      ready: "Ready",
       architecture: "Architecture",
       archShort: "Arch",
-      prescoreModel: "Pre-score",
+      prescoreModel: "AI pre-score",
       stainModel: "Stain map",
       language: "Language",
       close: "Close",
@@ -122,13 +123,13 @@ export const STRINGS = {
       fill: "Fill",
       disclaimer:
         "These credentials are checked in the browser and authenticate nobody. Research and workflow-support use only — not a medical device, and not validated for diagnostic use.",
-      posterChip: "Explainable measurement",
-      posterTitle: "See where the stain is, before you score the case.",
+      posterChip: "Explainable pre-scoring",
+      posterTitle: "See the evidence, then sign the score.",
       posterBody:
-        "Per-pixel intensity mapping over detected tissue, side by side with the classical optical-density baseline it was trained to imitate — so every disagreement between the two is visible rather than hidden inside a single number.",
-      statClasses: "Intensity classes mapped",
-      statSpeed: "Per 1024² field, laptop CPU",
-      statReviewed: "Reviewed by a pathologist",
+        "An AI pre-score with its probabilities, every tumour cell's membrane measured against the ASCO/CAP rules, and a clear statement of whether ISH is needed — with the reasoning shown, for the pathologist to confirm.",
+      statClasses: "AI pre-score with probabilities",
+      statSpeed: "2023 rules applied cell by cell",
+      statReviewed: "Signed by a pathologist",
     },
 
     profile: {
@@ -315,9 +316,9 @@ export const STRINGS = {
 
     dash: {
       lede:
-        "{n} fields reviewed on this workstation. Concordance between the measurements and your reading is running at {pct}.",
+        "{n} fields reviewed on this workstation. Pathologists agreed with the AI pre-score in {pct} of signed reviews.",
       ledeOne:
-        "{n} field reviewed on this workstation. Concordance between the measurements and your reading is running at {pct}.",
+        "{n} field reviewed on this workstation. Pathologists agreed with the AI pre-score in {pct} of signed reviews.",
       ledeNone:
         "Nothing reviewed on this workstation yet. Analyse a field and record your assessment to start the log.",
       kpiReviewed: "Fields reviewed",
@@ -329,10 +330,10 @@ export const STRINGS = {
       team: "All reviewers",
       thisWeek: "This week",
       recentSubDemo: "Demo history — the backend is not running",
-      kpiConcordant: "Measurements concordant",
-      kpiConcordantFoot: "{a} of {b} sign-offs agreed with the maps",
+      kpiConcordant: "Agreed with the AI",
+      kpiConcordantFoot: "{a} of {b} reviews agreed with the AI pre-score",
       kpiFlagged: "Flagged for disagreement",
-      kpiFlaggedFoot: "Reviewer marked the maps inconsistent with the field",
+      kpiFlaggedFoot: "Pathologist disagreed with the AI pre-score",
       kpiUnassessable: "Not assessable",
       kpiUnassessableFoot: "Insufficient invasive tumour in the field",
       benchOn: "Field on the bench",
@@ -356,10 +357,10 @@ export const STRINGS = {
       flagged: "Flagged",
       mix: "Assessment mix",
       mixSub: "Scores assigned by reviewers",
-      concordance: "Concordance",
-      concordanceSub: "Reviewer agreed with the maps",
+      concordance: "Agreement with the AI",
+      concordanceSub: "Signed reviews that agreed with the AI pre-score",
       concordanceNote:
-        "Concordance here means the reviewer ticked “the measurements are consistent with what I see”. It is not an accuracy figure: the model was never trained against pathologist labels.",
+        "The share of signed reviews where the pathologist marked “agree” with the AI pre-score. It is a record of agreement, not an accuracy figure.",
       deployment: "Deployment",
       deploymentSub: "What is answering right now",
       source: "Source",
@@ -375,7 +376,7 @@ export const STRINGS = {
       datasetLabel: "Dataset label",
       tissue: "Tissue",
       reviewer: "Reviewer",
-      concordant: "Concordant",
+      concordant: "Agreed with AI",
       notes: "Notes",
       recorded: "Recorded",
       when: "When",
@@ -395,6 +396,9 @@ export const STRINGS = {
       analyse: "Analyse field",
       source: "Field source",
       upload: "Upload",
+      tumourSite: "Tumour site",
+      tumourSiteHint: "Breast HER2 rules (ASCO/CAP) only. Gastric and other tumours use different criteria and are not scored here.",
+      sites: { breast: "Breast (primary or metastatic)", gastric: "Gastric or gastro-oesophageal", other: "Other" },
       samplePatch: "Example patch from the training dataset",
       noSamples: "No sample patches found",
       sampleHint:
@@ -509,7 +513,7 @@ export const STRINGS = {
         title: "Field annotations",
         listSub: "Regions marked on the image above, in the order they were saved",
         hint: "Drag on the image to mark a region",
-        toggle: "Annotate",
+        toggle: "Mark region",
         done: "Done",
         toggleTitle: "Mark regions on the field — Esc to stop",
         notePlaceholder: "What did you notice here?",
@@ -528,10 +532,10 @@ export const STRINGS = {
       title: "Case log",
       demoRows: "Demo history",
       lede:
-        "Every assessment recorded from this workstation. The server-side JSONL log written by {path} remains the record of truth; this is a convenience view of it.",
+        "Every review recorded on this server, newest first. Signed reviews are never edited; an amendment is a new version.",
       all: "All",
       flagged: "Flagged",
-      concordant: "Concordant",
+      concordant: "Agreed with AI",
       unassessable: "Not assessable",
       filterLabel: "Filter assessments",
       search: "Search patch, reviewer or note",
@@ -539,50 +543,50 @@ export const STRINGS = {
       emptyTitle: "Nothing matches that",
       emptyBody: "Clear the search, or pick a different filter.",
       footnote:
-        "“Concordant” records only whether the reviewer ticked <i>the measurements are consistent with what I see</i>. It is not a measure of the model's accuracy: the model was trained on optical-density pseudo-labels and has never seen a pathologist's label.",
+        "“Agreed with AI” records whether the pathologist marked “agree” with the AI pre-score in the review. It is a record of agreement, not a measure of the model's accuracy.",
     },
 
     model: {
       eyebrow: "Documentation",
       title: "Model card",
-      lede: "What the deployed checkpoint is, what it was trained on, and the four things it cannot do.",
+      lede: "What the models in this tool do, what they were trained and tested on, and what they cannot do.",
       spec: "Specification",
       specSub: "This deployment",
       limitations: "Known limitations",
-      limitationsSub: "Read these before quoting any figure from this tool",
+      limitationsSub: "Read these before relying on any result from this tool",
       comparison: "For comparison — a cleared commercial system",
       comparisonSub:
         "PathAI AIM-HER2 Breast Cancer. Somebody else's product, listed here to show what a validated system in this space looks like. None of its performance carries over to this project.",
       comparisonNote:
-        "The important difference: AIM-HER2 predicts a slide-level score and was trained against board-certified pathologist reads. This project predicts per-pixel stain intensity from threshold pseudo-labels and deliberately declines to produce a score.",
-      checkpoint: "Deployed checkpoint",
-      checkpointSub: "Reported by the server at load",
+        "The important difference: AIM-HER2 was validated against board-certified pathologist reads at many sites. This project's AI pre-score has been tested on public datasets only and is shown only at a site where it has been validated.",
+      checkpoint: "Models loaded now",
+      checkpointSub: "Reported by the server at start-up",
       checkpointLabel: "Checkpoint",
       trained: "Trained",
       demoWarning:
         "The backend is not reachable, so these values are placeholders from the demo module — not a running checkpoint.",
-      classes: "Intensity classes",
-      classesSub: "Palette supplied by the server",
+      classes: "Stain-map colours",
+      classesSub: "Used on the intensity map and the stained-area table",
       classIndex: "index {i} · {color}",
       classesNote:
-        "The legend, the intensity map and the results table all read this palette, so they can never drift apart. The DAB heatmap uses its own heat scale, anchored at the same three thresholds:",
+        "The legend, the intensity map and the stained-area table all read this palette, so they can never drift apart. The DAB heatmap uses its own heat scale, anchored at the same three thresholds:",
       specs: {
         intendedUse: "Intended use",
         intendedUseBody:
-          "Research and workflow support only. Not a medical device; not validated for diagnostic use.",
-        task: "Task",
+          "Research and workflow support for HER2 IHC scoring. Not a medical device; not validated for diagnostic use. Every score is assigned by a pathologist.",
+        task: "What it does",
         taskBody:
-          "Per-pixel stain-intensity segmentation over detected tissue. The model does not output a case-level HER2 score.",
+          "Suggests a HER2 IHC pre-score (0, 1+, 2+, 3+) with its probabilities, measures every detected cell's membrane against the ASCO/CAP rules, and states whether ISH is indicated. On whole slides it first finds invasive tumour.",
         indication: "Indication",
-        indicationBody: "Breast cancer HER2 immunohistochemistry",
+        indicationBody: "Breast cancer HER2 immunohistochemistry (ASCO/CAP 2023 scoring)",
         inputs: "Inputs",
-        inputsBody: "A single IHC field as PNG, JPEG or TIFF. Whole-slide images are not supported.",
+        inputsBody: "A single IHC field (PNG, JPEG or TIFF), or a whole slide (.svs, .ndpi, .tif) scanned at 20× or finer.",
         outputs: "Outputs",
         outputsBody:
-          "Tissue mask; four-class intensity map; per-class stained area as a percentage of detected tissue; conformal prediction-set ambiguity map where a calibration is loaded.",
-        targets: "Training targets",
+          "AI pre-score with probabilities and a 90% prediction set (validated sites only); cell-level ASCO/CAP evidence; ISH guidance; stain-intensity maps; a PDF report with the explanation.",
+        targets: "Training and testing",
         targetsBody:
-          "Pseudo-labels derived from classical DAB optical-density thresholds. No pathologist annotations were used.",
+          "AI pre-score: public HER2-IHC-40x and BCI datasets, labelled 0/1+/2+/3+ per image. Held-out test at the training site: 92.3% accuracy (QWK 0.975). BCI test set: 75.3%. Stain map: DAB optical-density pseudo-labels.",
         site: "Development site",
         siteBody: "Government Medical College Kottayam",
       },
@@ -602,18 +606,18 @@ export const STRINGS = {
         reference: "Reference",
       },
       limits: {
-        areaTitle: "It measures area, not cells",
-        areaBody:
-          "Percentages are shares of detected tissue area. Stroma, lymphocytes, normal ducts and control tissue all sit inside the denominator. The clinical rule counts invasive tumour cells with complete membrane staining — a different quantity, computed over a different population.",
-        twoTitle: "The 2+ class is the weak one",
-        twoBody:
-          "2+ is exactly where optical-density thresholds are least reliable, and thresholds are all this model ever learned from. Treat a 2+ area figure as a prompt to look closely, not as a number to quote.",
-        labelTitle: "It has never seen a pathologist's label",
+        siteTitle: "Validated at one site only",
+        siteBody:
+          "Accuracy was 92% at the training site but 75% on images from a second hospital. At any site that has not validated it locally, the AI pre-score is withheld and only the cell measurements are shown.",
+        labelTitle: "Its labels are image labels, not cell counts",
         labelBody:
-          "The model was trained to imitate a threshold rule. Where it disagrees with the baseline, that is generalisation — which may be an improvement or an error. Both columns are shown side by side so the disagreement is visible rather than averaged away.",
+          "The pre-score model learned from one 0/1+/2+/3+ label per image, not from pathologists' cell-by-cell reads. The cell evidence beside it is measured independently, so the two can be checked against each other.",
+        twoTitle: "2+ is the hardest grade",
+        twoBody:
+          "Equivocal staining is where pathologists themselves disagree most. A 2+ pre-score always routes to ISH; treat 1+ versus 2+ as the boundary to look at closely.",
         fieldTitle: "One field is not a case",
         fieldBody:
-          "Scoring is a slide-level and case-level judgement made on heterogeneity, membrane completeness and staining pattern. This tool sees one field at a time and has no view of the rest of the slide.",
+          "A single field cannot show heterogeneity across the slide. Whole-slide mode samples fields over the tissue; it does not find tumour, so it cannot separate invasive from in-situ carcinoma or stroma: confirm that the scored area is invasive tumour yourself.",
       },
     },
 
@@ -624,7 +628,7 @@ export const STRINGS = {
       caveatsTitle: "What these numbers are, and are not",
       caveatsSub: "Served alongside every analysis, and reprinted in every PDF report",
       pipeline: "How a field is processed",
-      pipelineSub: "Five steps, none of which produce a score",
+      pipelineSub: "Five steps; the pathologist signs the score",
       step: "Step {n}",
       notDeviceLead: "Not a medical device.",
       notDeviceBody:
@@ -640,21 +644,21 @@ export const STRINGS = {
         model_limitation: "The 2+ class",
       },
       steps: {
-        detectTitle: "Detect tissue",
-        detectBody:
-          "A tissue mask separates section from slide background. Everything outside it is excluded from every percentage the tool reports.",
-        classifyTitle: "Classify stain intensity",
-        classifyBody:
-          "Each tissue pixel is assigned one of four DAB intensity classes. This is a per-pixel segmentation, not a cell-level or membrane-level analysis.",
-        baselineTitle: "Run the threshold baseline",
-        baselineBody:
-          "The same field is passed through the classical optical-density threshold rule the model was trained to imitate, and both results are reported side by side.",
-        quantifyTitle: "Quantify the disagreement",
-        quantifyBody:
-          "The share of tissue pixels the two methods classify differently is reported as a single figure, and — where a conformal calibration is loaded — so is the share whose calibrated prediction set holds more than one class.",
-        handTitle: "Hand it to a pathologist",
+        tissueTitle: "Find the tissue",
+        tissueBody:
+          "Background, ink and the on-slide control are excluded. On a whole slide, fields are then sampled over the remaining tissue; tumour is not segmented, so confirm the fields lie in invasive tumour.",
+        cellsTitle: "Measure every cell's membrane",
+        cellsBody:
+          "Each detected cell's membrane is measured for completeness and intensity and placed in 0, 1+, 2+ or 3+ by the ASCO/CAP 2023 definitions; the field category follows the 10% rule.",
+        prescoreTitle: "Suggest an AI pre-score",
+        prescoreBody:
+          "A deep-learning model gives the probability of each grade and, at a validated site, a pre-score with a 90% prediction set. At an unvalidated site it is withheld.",
+        guideTitle: "State what the evidence means for ISH",
+        guideBody:
+          "The ASCO/CAP pathway, the quality checklist, the confidence interval at the 10% cut-off and where to count ISH are shown with the reasoning behind them.",
+        handTitle: "The pathologist decides",
         handBody:
-          "Nothing is recorded until a named reviewer selects a score and submits. The tool's own output is never treated as an assessment.",
+          "Nothing is recorded until a named pathologist enters and signs the score. Signed reviews can only be amended, never edited, and only signed reviews teach the model.",
       },
       data: {
         localTitle: "Uploads stay local",
@@ -662,7 +666,7 @@ export const STRINGS = {
           "An uploaded field is read in the browser and posted to the local backend. Nothing is sent to a third party.",
         logTitle: "Reviews are logged locally",
         logBody:
-          "Submitted assessments are appended to a JSONL file on the machine running the server.",
+          "Signed reviews and their amendments are kept in the review log on this server, with the name and time of every change.",
         reportTitle: "Reports are rendered server-side",
         reportBody:
           "The PDF contains the same images, measurements and caveats shown on screen — no more, and no fewer.",
@@ -730,6 +734,7 @@ export const STRINGS = {
       run: "റൺ",
       epoch: "എപ്പോക്ക്",
       epochShort: "എപ്പോക്ക് {n}",
+      ready: "തയ്യാർ",
       architecture: "ആർക്കിടെക്ചർ",
       archShort: "ആർക്ക്",
       prescoreModel: "പ്രീ-സ്കോർ",
@@ -809,12 +814,6 @@ export const STRINGS = {
       fill: "പൂരിപ്പിക്കുക",
       disclaimer:
         "ഈ വിവരങ്ങൾ ബ്രൗസറിൽ മാത്രമാണ് പരിശോധിക്കുന്നത്; ഇവ ആരെയും ആധികാരികമായി തിരിച്ചറിയുന്നില്ല. ഗവേഷണത്തിനും ജോലിക്രമത്തിനുള്ള പിന്തുണയ്ക്കും മാത്രം — ഇതൊരു മെഡിക്കൽ ഉപകരണമല്ല, രോഗനിർണയത്തിനായി സാധൂകരിച്ചിട്ടുമില്ല.",
-      posterChip: "വിശദീകരിക്കാവുന്ന അളവെടുപ്പ്",
-      posterTitle: "കേസ് സ്കോർ ചെയ്യും മുൻപ്, സ്റ്റെയിൻ എവിടെയാണെന്ന് കാണുക.",
-      posterBody:
-        "കണ്ടെത്തിയ ടിഷ്യുവിന് മേൽ പിക്സൽ തലത്തിലുള്ള തീവ്രതാ മാപ്പിങ്, അതിനൊപ്പം മോഡൽ അനുകരിക്കാൻ പഠിച്ച പരമ്പരാഗത ഒപ്റ്റിക്കൽ-ഡെൻസിറ്റി ബേസ്‌ലൈനും — അങ്ങനെ ഇവ രണ്ടും തമ്മിലുള്ള ഓരോ വ്യത്യാസവും ഒറ്റ സംഖ്യയ്ക്കുള്ളിൽ മറയാതെ കാണാം.",
-      statClasses: "മാപ്പ് ചെയ്ത തീവ്രതാ വിഭാഗങ്ങൾ",
-      statSpeed: "ഓരോ 1024² ഫീൽഡിനും, ലാപ്‌ടോപ്പ് CPU-യിൽ",
       statReviewed: "പാത്തോളജിസ്റ്റ് പരിശോധിക്കുന്നു",
     },
 
@@ -1084,6 +1083,9 @@ export const STRINGS = {
       analyse: "ഫീൽഡ് വിശകലനം ചെയ്യുക",
       source: "ഫീൽഡിന്റെ ഉറവിടം",
       upload: "അപ്‌ലോഡ്",
+      tumourSite: "ട്യൂമർ സ്ഥാനം",
+      tumourSiteHint: "സ്തനാർബുദ HER2 നിയമങ്ങൾ (ASCO/CAP) മാത്രം. ആമാശയ അർബുദത്തിനും മറ്റുള്ളവയ്ക്കും വ്യത്യസ്ത മാനദണ്ഡങ്ങളാണ്; അവ ഇവിടെ സ്കോർ ചെയ്യുന്നില്ല.",
+      sites: { breast: "സ്തനം (പ്രാഥമികം അല്ലെങ്കിൽ മെറ്റാസ്റ്റാറ്റിക്)", gastric: "ആമാശയം / ഗ്യാസ്ട്രോ-ഈസോഫേജിയൽ", other: "മറ്റുള്ളവ" },
       samplePatch: "പരിശീലന ഡാറ്റാസെറ്റിൽ നിന്നുള്ള ഉദാഹരണ പാച്ച്",
       noSamples: "ഉദാഹരണ പാച്ചുകളൊന്നും കണ്ടെത്തിയില്ല",
       sampleHint:
@@ -1221,8 +1223,6 @@ export const STRINGS = {
     model: {
       eyebrow: "രേഖകൾ",
       title: "മോഡൽ കാർഡ്",
-      lede:
-        "വിന്യസിച്ച ചെക്ക്‌പോയിന്റ് എന്താണ്, അത് എന്തിൽ നിന്ന് പഠിച്ചു, അതിനു ചെയ്യാനാകാത്ത നാല് കാര്യങ്ങൾ ഏതൊക്കെ.",
       spec: "വിശദാംശങ്ങൾ",
       specSub: "ഈ വിന്യാസം",
       limitations: "അറിയപ്പെടുന്ന പരിമിതികൾ",
@@ -1230,37 +1230,19 @@ export const STRINGS = {
       comparison: "താരതമ്യത്തിന് — അംഗീകാരം ലഭിച്ച ഒരു വാണിജ്യ സംവിധാനം",
       comparisonSub:
         "PathAI AIM-HER2 Breast Cancer. ഇത് മറ്റൊരു കമ്പനിയുടെ ഉൽപ്പന്നമാണ്; ഈ മേഖലയിൽ സാധൂകരിക്കപ്പെട്ട ഒരു സംവിധാനം എങ്ങനെയിരിക്കും എന്നു കാണിക്കാൻ മാത്രം ഇവിടെ ചേർത്തിരിക്കുന്നു. അതിന്റെ പ്രകടനത്തിലൊന്നും ഈ പ്രോജക്ടിന് അവകാശമില്ല.",
-      comparisonNote:
-        "പ്രധാന വ്യത്യാസം: AIM-HER2 സ്ലൈഡ് തലത്തിലുള്ള സ്കോർ പ്രവചിക്കുന്നു; ബോർഡ് സർട്ടിഫൈഡ് പാത്തോളജിസ്റ്റുകളുടെ വിലയിരുത്തലുകൾ ഉപയോഗിച്ചാണ് അത് പരിശീലിച്ചത്. ഈ പ്രോജക്ട് ത്രെഷോൾഡ് സ്യൂഡോ-ലേബലുകളിൽ നിന്ന് പിക്സൽ തലത്തിലുള്ള സ്റ്റെയിൻ തീവ്രത പ്രവചിക്കുന്നു, ഒരു സ്കോർ നൽകാൻ ബോധപൂർവം വിസമ്മതിക്കുകയും ചെയ്യുന്നു.",
-      checkpoint: "വിന്യസിച്ച ചെക്ക്‌പോയിന്റ്",
-      checkpointSub: "ലോഡ് ചെയ്യുമ്പോൾ സെർവർ അറിയിക്കുന്നത്",
       checkpointLabel: "ചെക്ക്‌പോയിന്റ്",
       trained: "പരിശീലിപ്പിച്ചത്",
       demoWarning:
         "ബാക്കെൻഡിലേക്ക് എത്താനാകുന്നില്ല, അതിനാൽ ഈ വിവരങ്ങൾ ഡെമോ മൊഡ്യൂളിൽ നിന്നുള്ള താൽക്കാലിക മൂല്യങ്ങളാണ് — പ്രവർത്തിക്കുന്ന ഒരു ചെക്ക്‌പോയിന്റിന്റേതല്ല.",
-      classes: "തീവ്രതാ വിഭാഗങ്ങൾ",
-      classesSub: "സെർവർ നൽകുന്ന വർണനിര",
       classIndex: "സൂചിക {i} · {color}",
-      classesNote:
-        "ലെജൻഡും തീവ്രതാ മാപ്പും ഫലപ്പട്ടികയും ഇതേ വർണനിര തന്നെയാണ് വായിക്കുന്നത്, അതിനാൽ അവ തമ്മിൽ ഒരിക്കലും വ്യത്യാസം വരില്ല. DAB ഹീറ്റ്മാപ്പിന് സ്വന്തം ഹീറ്റ് സ്കെയിൽ ഉണ്ട്, അതേ മൂന്ന് ത്രെഷോൾഡുകളിൽ ഉറപ്പിച്ചത്:",
       specs: {
         intendedUse: "ഉദ്ദേശിച്ച ഉപയോഗം",
         intendedUseBody:
           "ഗവേഷണത്തിനും ജോലിക്രമ പിന്തുണയ്ക്കും മാത്രം. ഇതൊരു മെഡിക്കൽ ഉപകരണമല്ല; രോഗനിർണയത്തിനായി സാധൂകരിച്ചിട്ടില്ല.",
-        task: "ദൗത്യം",
-        taskBody:
-          "കണ്ടെത്തിയ ടിഷ്യുവിന് മേൽ പിക്സൽ തലത്തിലുള്ള സ്റ്റെയിൻ-തീവ്രതാ വിഭജനം. കേസ് തലത്തിലുള്ള HER2 സ്കോർ മോഡൽ നൽകുന്നില്ല.",
         indication: "സൂചന",
         indicationBody: "സ്തനാർബുദ HER2 ഇമ്യൂണോഹിസ്റ്റോകെമിസ്ട്രി",
         inputs: "ഇൻപുട്ടുകൾ",
-        inputsBody:
-          "PNG, JPEG അല്ലെങ്കിൽ TIFF രൂപത്തിലുള്ള ഒറ്റ IHC ഫീൽഡ്. മുഴുവൻ സ്ലൈഡ് ചിത്രങ്ങൾ പിന്തുണയ്ക്കുന്നില്ല.",
         outputs: "ഔട്ട്പുട്ടുകൾ",
-        outputsBody:
-          "ടിഷ്യു മാസ്ക്; നാല് വിഭാഗ തീവ്രതാ മാപ്പ്; കണ്ടെത്തിയ ടിഷ്യുവിന്റെ ശതമാനമായി ഓരോ വിഭാഗത്തിന്റെയും സ്റ്റെയിൻ വിസ്തീർണം; കാലിബ്രേഷൻ ലോഡ് ചെയ്തിട്ടുണ്ടെങ്കിൽ കൺഫോർമൽ പ്രവചനഗണ അവ്യക്തതാ മാപ്പ്.",
-        targets: "പരിശീലന ലക്ഷ്യങ്ങൾ",
-        targetsBody:
-          "പരമ്പരാഗത DAB ഒപ്റ്റിക്കൽ-ഡെൻസിറ്റി ത്രെഷോൾഡുകളിൽ നിന്ന് ഉരുത്തിരിഞ്ഞ സ്യൂഡോ-ലേബലുകൾ. പാത്തോളജിസ്റ്റുകളുടെ അടയാളപ്പെടുത്തലുകൾ ഉപയോഗിച്ചിട്ടില്ല.",
         site: "വികസന കേന്ദ്രം",
         siteBody: "കോട്ടയം ഗവൺമെന്റ് മെഡിക്കൽ കോളേജ്",
       },
@@ -1279,20 +1261,6 @@ export const STRINGS = {
           "പ്രാഥമിക, ആവർത്തിത അല്ലെങ്കിൽ മെറ്റാസ്റ്റാറ്റിക് ട്യൂമറിൽ നിന്നുള്ള മുഴുവൻ സ്ലൈഡ് ബയോപ്സി, റിസെക്ഷൻ അല്ലെങ്കിൽ എക്സിഷൻ; ഇൻ-സൈറ്റു ട്യൂമർ ഒഴികെ",
         reference: "അവലംബം",
       },
-      limits: {
-        areaTitle: "ഇത് വിസ്തീർണമാണ് അളക്കുന്നത്, കോശങ്ങളല്ല",
-        areaBody:
-          "ശതമാനങ്ങൾ കണ്ടെത്തിയ ടിഷ്യു വിസ്തീർണത്തിന്റെ പങ്കുകളാണ്. സ്ട്രോമ, ലിംഫോസൈറ്റുകൾ, സാധാരണ ഡക്ടുകൾ, കൺട്രോൾ ടിഷ്യു എന്നിവയെല്ലാം ഛേദത്തിനുള്ളിലാണ്. ക്ലിനിക്കൽ നിയമം എണ്ണുന്നത് പൂർണമായ മെംബ്രെയ്ൻ സ്റ്റെയിനിങ്ങുള്ള ഇൻവേസീവ് ട്യൂമർ കോശങ്ങളെയാണ് — അത് വേറൊരു അളവാണ്, വേറൊരു കൂട്ടത്തിന് മേൽ കണക്കാക്കുന്നതും.",
-        twoTitle: "2+ വിഭാഗമാണ് ഏറ്റവും ദുർബലം",
-        twoBody:
-          "ഒപ്റ്റിക്കൽ-ഡെൻസിറ്റി ത്രെഷോൾഡുകൾക്ക് ഏറ്റവും വിശ്വാസ്യത കുറവുള്ളത് കൃത്യമായും 2+ എന്നിടത്താണ്; ഈ മോഡൽ പഠിച്ചതാകട്ടെ ത്രെഷോൾഡുകളിൽ നിന്നു മാത്രവും. ഒരു 2+ വിസ്തീർണക്കണക്ക് സൂക്ഷ്മമായി നോക്കാനുള്ള സൂചനയായി കാണുക, ഉദ്ധരിക്കാനുള്ള സംഖ്യയായിട്ടല്ല.",
-        labelTitle: "ഒരു പാത്തോളജിസ്റ്റിന്റെ ലേബൽ ഇത് ഒരിക്കലും കണ്ടിട്ടില്ല",
-        labelBody:
-          "ഒരു ത്രെഷോൾഡ് നിയമം അനുകരിക്കാനാണ് മോഡലിനെ പരിശീലിപ്പിച്ചത്. ബേസ്‌ലൈനുമായി അത് വിയോജിക്കുന്നിടത്ത് അത് സാമാന്യവൽക്കരണമാണ് — അത് ഒരു മെച്ചപ്പെടുത്തലാകാം, ഒരു പിഴവുമാകാം. വ്യത്യാസം ശരാശരിയിൽ മറയാതിരിക്കാൻ രണ്ട് നിരകളും അടുത്തടുത്ത് കാണിക്കുന്നു.",
-        fieldTitle: "ഒരു ഫീൽഡ് ഒരു കേസ് അല്ല",
-        fieldBody:
-          "വൈവിധ്യം, മെംബ്രെയ്ൻ പൂർണത, സ്റ്റെയിനിങ് രീതി എന്നിവ നോക്കി സ്ലൈഡ് തലത്തിലും കേസ് തലത്തിലും എടുക്കുന്ന തീരുമാനമാണ് സ്കോറിങ്. ഈ ഉപകരണം ഒരു സമയം ഒരു ഫീൽഡ് മാത്രമാണ് കാണുന്നത്; സ്ലൈഡിന്റെ ബാക്കി ഭാഗം അതിന്റെ കാഴ്ചയിലില്ല.",
-      },
     },
 
     method: {
@@ -1303,7 +1271,7 @@ export const STRINGS = {
       caveatsTitle: "ഈ സംഖ്യകൾ എന്താണ്, എന്തല്ല",
       caveatsSub: "ഓരോ വിശകലനത്തിനൊപ്പവും നൽകുന്നു, ഓരോ PDF റിപ്പോർട്ടിലും വീണ്ടും ചേർക്കുന്നു",
       pipeline: "ഒരു ഫീൽഡ് എങ്ങനെ സംസ്കരിക്കുന്നു",
-      pipelineSub: "അഞ്ച് ഘട്ടങ്ങൾ, ഒന്നും ഒരു സ്കോർ ഉണ്ടാക്കുന്നില്ല",
+      pipelineSub: "അഞ്ച് ഘട്ടങ്ങൾ; സ്കോർ ഒപ്പിടുന്നത് പാത്തോളജിസ്റ്റ്",
       step: "ഘട്ടം {n}",
       notDeviceLead: "ഇതൊരു മെഡിക്കൽ ഉപകരണമല്ല.",
       notDeviceBody:
@@ -1317,23 +1285,6 @@ export const STRINGS = {
         denominator: "ഈ ശതമാനം ആരുടേതാണ്",
         targets: "മോഡൽ എന്തിൽ നിന്ന് പഠിച്ചു",
         model_limitation: "2+ വിഭാഗം",
-      },
-      steps: {
-        detectTitle: "ടിഷ്യു കണ്ടെത്തുക",
-        detectBody:
-          "ഒരു ടിഷ്യു മാസ്ക് സെക്ഷനെ സ്ലൈഡിന്റെ പശ്ചാത്തലത്തിൽ നിന്ന് വേർതിരിക്കുന്നു. അതിനു പുറത്തുള്ളതെല്ലാം ഉപകരണം നൽകുന്ന എല്ലാ ശതമാനക്കണക്കുകളിൽ നിന്നും ഒഴിവാക്കുന്നു.",
-        classifyTitle: "സ്റ്റെയിൻ തീവ്രത തരംതിരിക്കുക",
-        classifyBody:
-          "ഓരോ ടിഷ്യു പിക്സലിനും നാല് DAB തീവ്രതാ വിഭാഗങ്ങളിൽ ഒന്ന് നൽകുന്നു. ഇത് പിക്സൽ തലത്തിലുള്ള വിഭജനമാണ്; കോശ തലത്തിലോ മെംബ്രെയ്ൻ തലത്തിലോ ഉള്ള വിശകലനമല്ല.",
-        baselineTitle: "ത്രെഷോൾഡ് ബേസ്‌ലൈൻ പ്രവർത്തിപ്പിക്കുക",
-        baselineBody:
-          "മോഡൽ അനുകരിക്കാൻ പഠിച്ച പരമ്പരാഗത ഒപ്റ്റിക്കൽ-ഡെൻസിറ്റി ത്രെഷോൾഡ് നിയമത്തിലൂടെ അതേ ഫീൽഡ് കടത്തിവിടുന്നു; രണ്ട് ഫലങ്ങളും അടുത്തടുത്ത് കാണിക്കുന്നു.",
-        quantifyTitle: "വ്യത്യാസം അളക്കുക",
-        quantifyBody:
-          "രണ്ട് രീതികളും വ്യത്യസ്തമായി തരംതിരിക്കുന്ന ടിഷ്യു പിക്സലുകളുടെ പങ്ക് ഒറ്റ സംഖ്യയായി നൽകുന്നു; കൺഫോർമൽ കാലിബ്രേഷൻ ലോഡ് ചെയ്തിട്ടുണ്ടെങ്കിൽ, ഒന്നിലധികം വിഭാഗങ്ങളുള്ള പ്രവചനഗണമുള്ളവയുടെ പങ്കും നൽകുന്നു.",
-        handTitle: "പാത്തോളജിസ്റ്റിന് കൈമാറുക",
-        handBody:
-          "പേരു വ്യക്തമാക്കിയ ഒരു പരിശോധകൻ സ്കോർ തിരഞ്ഞെടുത്ത് സമർപ്പിക്കുന്നതുവരെ ഒന്നും രേഖപ്പെടുത്തുന്നില്ല. ഉപകരണത്തിന്റെ സ്വന്തം ഫലം ഒരിക്കലും ഒരു വിലയിരുത്തലായി കണക്കാക്കുന്നില്ല.",
       },
       data: {
         localTitle: "അപ്‌ലോഡുകൾ ഇവിടെത്തന്നെ നിൽക്കുന്നു",

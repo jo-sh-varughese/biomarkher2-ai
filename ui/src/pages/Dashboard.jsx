@@ -14,6 +14,7 @@ import {
   classForLabel,
   dailyCounts,
   dominantClass,
+  GRADE_COLOR,
   greetingKey,
   initials,
   isCannotAssess,
@@ -61,7 +62,7 @@ export default function Dashboard() {
         key: label,
         label,
         count: reviews.filter((r) => r.score === label).length,
-        color: classForLabel(classes, label)?.color ?? "var(--accent)",
+        color: GRADE_COLOR[label] ?? classForLabel(classes, label)?.color ?? "var(--accent)",
       })),
       {
         key: "cannot",
@@ -225,9 +226,9 @@ export default function Dashboard() {
                 <div className="tiny muted">{jobTitle(user, t)}</div>
               </div>
             </div>
-            <p className="tiny muted">
-              {user.deptKey ? t(user.deptKey) : user.role ? t(`roles.${user.role}`) : t("demo.department")}
-            </p>
+            {user.deptKey ? <p className="tiny muted">
+              {t(user.deptKey)}
+            </p> : null}
             <div className="profile-card__stats">
               <div>
                 <b>{stats.mine}</b>
@@ -278,19 +279,24 @@ export default function Dashboard() {
               </Link>
             </div>
             <dl className="spec-list spec-list--tight">
+              {/* Both models that answer on the analysis screen, named for
+                  what they do -- this card once showed only the stain map,
+                  as if it produced the pre-score. */}
               <div>
-                <dt>{t("common.run")}</dt>
-                <dd className="mono" title={context?.provenance?.run}>
-                  {context?.provenance?.run ? runName(context.provenance.run) : "—"}
+                <dt>{t("common.prescoreModel")}</dt>
+                <dd title={context?.prescore_model?.checkpoint}>
+                  {context?.prescore_model
+                    ? `${context.prescore_model.encoder ?? ""} · ${t("common.epochShort", { n: context.prescore_model.epoch })}`
+                    : "—"}
                 </dd>
               </div>
               <div>
-                <dt>{t("common.epoch")}</dt>
-                <dd className="mono">{context?.provenance?.epoch ?? "—"}</dd>
-              </div>
-              <div>
-                <dt>{t("common.architecture")}</dt>
-                <dd className="mono">{context?.provenance?.architecture?.toUpperCase() ?? "—"}</dd>
+                <dt>{t("common.stainModel")}</dt>
+                <dd title={context?.provenance?.run}>
+                  {context?.provenance?.run
+                    ? `${runName(context.provenance.run)} · ${t("common.epochShort", { n: context.provenance.epoch })}`
+                    : "—"}
+                </dd>
               </div>
               <div>
                 <dt>{t("dash.source")}</dt>

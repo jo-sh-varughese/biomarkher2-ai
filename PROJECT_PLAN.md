@@ -131,10 +131,9 @@ kinds of effort.
   regressed), an ordinal-distance auxiliary loss (`PHASE5_ORDINAL.md`,
   **rejected** — moderate worse), and training for 8 instead of 4 epochs
   (`PHASE5_8EPOCHS.md`, **adopted** — moderate 0.589 → 0.657, every class
-  improved). Adopting the 8-epoch result as the actual default (updating
-  `configs/training.yaml` and retraining into `artifacts/phase2_unet`) is a
-  deliberately deferred follow-up, not done yet — see that file's own "What
-  adopting this means, not yet done". A DAB-threshold sensitivity sweep
+  improved). The 8-epoch result is now the actual default (done 2026-10-06:
+  `configs/training.yaml` trains 8 epochs into `artifacts/phase2_unet_8epochs`, which the app and
+  Docker load; the 4-epoch baseline is `configs/training_baseline_4epochs.yaml`). A DAB-threshold sensitivity sweep
   (`PHASE5_THRESHOLD_SENSITIVITY.md`) found the pixel-share of moderate is
   highly sensitive to the cut point, but no model has been trained on a
   threshold variant yet — that run (`configs/training_moderate_042.yaml`) is
@@ -203,7 +202,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu   # see requi
 pytest -q
 
 # launch the review-viewer
-python -m app.server --run artifacts/phase2_unet
+python -m app.server --run artifacts/phase2_unet_8epochs
 # open http://127.0.0.1:8000
 ```
 

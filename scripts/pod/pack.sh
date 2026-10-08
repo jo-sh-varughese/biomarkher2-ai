@@ -7,6 +7,6 @@ mkdir -p dist
 tar -czf dist/her2_v2_code.tgz \
   --exclude='__pycache__' --exclude='*.pyc' \
   models training preprocessing evaluation wsi \
-  scripts/train_v2.py scripts/eval_v2.py scripts/adapt_v2.py scripts/fewshot_v2.py scripts/site_fingerprint.py scripts/train_tumour.py scripts/pod \
+  scripts/train_v2.py scripts/eval_v2.py scripts/adapt_v2.py scripts/fewshot_v2.py scripts/site_fingerprint.py scripts/pod \
   configs
 ls -la dist/her2_v2_code.tgz

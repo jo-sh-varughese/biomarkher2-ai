@@ -1,0 +1,87 @@
+# BioMarkHER2 -- the original 4-epoch baseline protocol (kept for reproducibility).
+#
+# configs/training.yaml now trains for 8 epochs and is the default (see
+# PHASE5_8EPOCHS.md: moderate 2+ IoU 0.589 -> 0.657, tissue mean IoU 0.746 -> 0.811).
+# This file is the OLD default, unchanged, so the baseline that PHASE5*.md compare
+# against can still be reproduced:
+#     python scripts/train_phase2.py --config configs/training_baseline_4epochs.yaml
+# Its output (artifacts/phase2_unet) is the run those documents call "baseline".
+#
+# BioMarkHER2 -- training configuration: ResNet18-UNet, RGB+DAB input.
+#
+# The defaults here describe a run that actually finishes on the machine this
+# project is developed on: CPU only, 4 threads, no GPU. They are deliberately
+# modest. To train on everything, set the three max_*_patches entries to null
+# and raise epochs -- expect that to take days at this batch size on CPU.
+#
+# This used to be one of two configs (this one for SegFormer, a separate
+# configs/training_unet.yaml for the ResNet18-UNet candidate being compared
+# against it). SegFormer lost the comparison on every class (see PHASE5.md)
+# and was removed; the two configs have been folded into this one file, since
+# there is now only one architecture to configure.
+
+split:
+  # Held out = patches whose FILENAME origin token is "test", not patches in
+  # the test/ directory. The two disagree: 78% of the files in test/ are named
+  # _train_ and 17% of the files in train/ are named _test_, so the directory
+  # layout is a re-packaging rather than a split, and holding out test/ would
+  # have leaked. training/splits.py has the full measurement, and also why
+  # true slide-level grouping is impossible on this dataset. Read it before
+  # quoting any number from here.
+  holdout_by: filename_origin   # or "directory", to reproduce the difference
+  holdout_value: test
+  val_fraction: 0.15
+  stratify: true              # the 2+ class is scarce; do not let it vanish
+  seed: 20260805
+  require_all_classes: true
+
+model:
+  architecture: unet
+  num_classes: 5              # background, negative, weak, moderate, strong
+  image_size: 512             # 1024 @ 40x downsampled by 2 -> 512 @ ~20x
+  pretrained: true            # ImageNet-pretrained ResNet18 encoder
+  in_channels: 4               # RGB + DAB optical density -- see models/unet_seg.py
+
+loss:
+  cross_entropy_weight: 1.0
+  dice_weight: 0.5            # rare-class insurance; see training/losses.py
+  focal_weight: 1.0           # downweights easy pixels; see training/losses.py
+  focal_gamma: 2.0
+  class_weights: null         # inverse-frequency weighting is available but off
+  ignore_index: -100
+  label_smoothing: 0.0
+  dice_smooth: 1.0
+
+optim:
+  learning_rate: 1.0e-4       # not deeply tuned -- see PHASE5.md
+  weight_decay: 0.01
+  epochs: 4
+  batch_size: 2               # 512x512 on CPU
+  grad_accum_steps: 4         # effective batch 8
+  warmup_fraction: 0.05
+  max_grad_norm: 1.0
+  num_workers: 0              # Windows: worker spawn costs more than it saves
+
+data:
+  patch_root: data/raw
+  cache_root: data/cache/pseudo_labels_40x
+  # These cap SOURCE PATCHES, not training tiles. At downsample: 1 each 1024
+  # patch yields four 512 tiles, so 200 patches is ~800 tiles. The cap is
+  # applied to patches and only then expanded, which is what keeps tiles of
+  # one patch from straddling the fit/validation boundary.
+  #
+  # Not a statement about how much data exists: 10,997 patches are available.
+  # Measured on this machine: ~2.9 s per batch of 2 at 512x512 on 4 CPU
+  # threads, so ~800 tiles is ~19 min/epoch. Set these to null for a full run
+  # and expect days, not hours.
+  #
+  # The cap is applied per class (training.splits.stratified_subsample), never
+  # by slicing -- patch ids sort by class folder, so a slice would take one
+  # class and the run would look fine while learning nothing.
+  max_fit_patches: 200
+  max_val_patches: 30
+  max_holdout_patches: 200
+  augment: true               # flips and 90-degree rotations only
+
+output_dir: artifacts/phase2_unet
+seed: 20260805

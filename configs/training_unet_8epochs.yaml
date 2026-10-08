@@ -1,3 +1,5 @@
+# NOTE (2026-10-06): configs/training.yaml is now identical to this file; this copy is kept
+# because PHASE5_8EPOCHS.md and scripts/cross_site_stain_eval.py refer to it by name.
 # BioMarkHER2 -- plain baseline protocol, run for 8 epochs instead of 4.
 #
 # Identical to configs/training.yaml (the baseline) in every other respect.

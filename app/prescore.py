@@ -48,6 +48,8 @@ class PrescoreResult:
     heterogeneity: dict = field(default_factory=dict)
     evidence_map: np.ndarray | None = None
     model: dict = field(default_factory=dict)
+    tile_embeddings: np.ndarray | None = None
+    """(T, 512) -- what the learning store keeps (app/learning); never sent to the browser."""
 
     def public(self) -> dict:
         return {"category": self.category, "probabilities": self.probabilities,
@@ -59,7 +61,8 @@ class PrescoreResult:
 GRADE_NAMES = ("0", "1+", "2+", "3+")
 
 
-def prediction_set(probabilities: dict, run_dir: Path, site: str | None, alpha: float = 0.1) -> dict:
+def prediction_set(probabilities: dict, run_dir: Path, site: str | None, alpha: float = 0.1,
+                   head_version: str = "v0") -> dict:
     """Conformal prediction set for one field's pre-score (scripts/calibrate_prescore_sets.py).
 
     Shown only when the calibration was made for THIS site: a set calibrated at
@@ -76,6 +79,10 @@ def prediction_set(probabilities: dict, run_dir: Path, site: str | None, alpha: 
     if site and cal.get("site") != site:
         return {"available": False,
                 "reason": f"Calibrated for {cal.get('site')}, not for this site; calibrate with local cases first."}
+    if cal.get("head_version", "v0") != head_version:
+        # a learned version changes the probabilities the thresholds were fitted to
+        return {"available": False, "reason": f"Calibrated for model version {cal.get('head_version', 'v0')}, "
+                                              f"not {head_version}; recalibrate after activating a new version."}
     q = float(cal["thresholds"][str(alpha)])
     grades = [g for g in GRADE_NAMES if 1.0 - float(probabilities.get(g, 0.0)) <= q]
     return {"available": True, "coverage": round(1 - alpha, 2), "grades": grades,
@@ -148,7 +155,7 @@ class PrescoreEngine:
             tiles=regions, grid=(rows, cols),
             heterogeneity={"regions_by_grade": share, "grade_spread": int(spread), "heterogeneous": bool(heterogeneous),
                            "regions_with_tissue": len(tissue_regions)},
-            evidence_map=heat, model=self.info)
+            evidence_map=heat, model=dict(self.info), tile_embeddings=tile_emb.detach().cpu().numpy())
 
 
 def evidence_overlay(rgb: np.ndarray, heat: np.ndarray, alpha: float = 0.55) -> np.ndarray:

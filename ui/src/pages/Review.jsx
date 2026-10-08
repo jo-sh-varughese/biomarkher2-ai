@@ -28,7 +28,7 @@ const GRADE_COLOR = { 0: "#6e82a0", "1+": "#d9b230", "2+": "#e08214", "3+": "#c8
 const CATEGORY = { 0: "HER2-0", "1+": "HER2-low", "2+": "HER2 equivocal (IHC 2+)", "3+": "HER2-positive" };
 
 const EMPTY = {
-  accession: "", patient_ref: "", block: "", specimen_type: "", antibody_clone: "", fixation_ok: "",
+  accession: "", patient_ref: "", block: "", tumour_site: "breast", specimen_type: "", antibody_clone: "", fixation_ok: "",
   cold_ischaemia_ok: "", control_status: "", tissue_adequacy: "", invasive_cells_estimate: "",
   score: "", ultralow: false, pct_complete_intense: "", pct_complete_weak_moderate: "", pct_incomplete_faint: "",
   pct_no_staining: "", heterogeneous: false, staining_pattern: [], artefacts: [], ai_agreement: "",
@@ -66,7 +66,10 @@ export default function Review() {
 
   /* a new case: fresh form and clock */
   useEffect(() => {
-    setForm({ ...EMPTY, ai_agreement: target && !aiShown ? "AI not shown" : "" });
+    // A field the system could not assess starts as "cannot assess"; the
+    // pathologist may still change it if their own reading differs.
+    setForm({ ...EMPTY, ai_agreement: target && !aiShown ? "AI not shown" : "",
+              score: target?.quality?.assessable === false ? "cannot assess from this field" : "" });
     setAmends(null);
     setAttest(false);
     started.current = new Date();
@@ -113,6 +116,7 @@ export default function Review() {
         attest: status === "final" ? attest : false,
         her2_category: category,
         patch_id: target.id,
+        case_id: target.case_id || "",
         kind: target.kind,
         // A draft or preliminary record is continued, not duplicated: the next
         // save supersedes it as the next version. A signed one is only changed
@@ -131,6 +135,8 @@ export default function Review() {
           cell_category: cells?.field_category ?? null,
           cells_measured: cells?.cells_measured ?? null,
           ish_suggestion: guide?.ish?.level ?? null,
+          assessable: target.quality ? target.quality.assessable !== false : null,
+          quality_reasons: (target.quality?.reasons ?? []).filter((r) => r.level === "block").map((r) => r.code),
         },
         measurements: target.measurements ?? {},
       };
@@ -231,7 +237,15 @@ export default function Review() {
                   ) : ai?.available ? t("review.aiWithheld") : t("review.aiNone")}
                 </dd>
               </div>
-              {cells ? (
+              {target.quality?.assessable === false ? (
+                <div>
+                  <dt>{t("prescore.notAssessableShort")}</dt>
+                  <dd className="review__blocked">
+                    {(target.quality.reasons ?? []).filter((r) => r.level === "block").map((r) => r.text).join(" ")}
+                  </dd>
+                </div>
+              ) : null}
+              {cells?.field_category ? (
                 <div>
                   <dt>{t("review.cellEvidence")}</dt>
                   <dd>
@@ -302,6 +316,7 @@ export default function Review() {
                 <Text id="block" t={t} form={form} set={set} placeholder small />
               </div>
               <div className="review__row">
+                <Select id="tumour_site" t={t} form={form} set={set} options={enums.tumour_site} />
                 <Select id="specimen_type" t={t} form={form} set={set} options={enums.specimen_type} />
                 <Select id="antibody_clone" t={t} form={form} set={set} options={enums.antibody_clone} />
               </div>

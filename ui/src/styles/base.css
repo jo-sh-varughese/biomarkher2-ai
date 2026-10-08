@@ -10,6 +10,8 @@
 * { margin: 0; }
 
 html {
+  /* Larger root size: the readers include senior pathologists at arm's length from a reporting screen. */
+  font-size: 17px;
   -webkit-text-size-adjust: 100%;
   scroll-behavior: smooth;
 }
@@ -31,7 +33,7 @@ body {
   overflow-x: hidden;
   -webkit-tap-highlight-color: transparent;
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.55;
   color: var(--text);
   background: var(--bg);
@@ -74,7 +76,7 @@ p { text-wrap: pretty; }
    Without this the ascenders and descenders collide with neighbouring rows,
    which is most obvious in dense places -- table cells and the nav. */
 :root[lang="ml"] body {
-  font-size: 14.5px;
+  font-size: 15.5px;
   line-height: 1.72;
 }
 
@@ -135,7 +137,7 @@ p { text-wrap: pretty; }
 /* --------------------------------------------------------- helper text --- */
 
 .eyebrow {
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -277,7 +279,7 @@ p { text-wrap: pretty; }
   border-radius: var(--r-pill);
   background: var(--surface-sunken);
   color: var(--text-2);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.02em;
   white-space: nowrap;

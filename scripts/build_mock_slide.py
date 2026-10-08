@@ -10,7 +10,7 @@ just a bigger input. That has never been exercised at a scale bigger than one
 1024x1024 patch. This script proves it works, and times how slow it is.
 
     python scripts/build_mock_slide.py
-    python scripts/build_mock_slide.py --analyze artifacts/phase2_unet
+    python scripts/build_mock_slide.py --analyze artifacts/phase2_unet_8epochs
 
 See PHASE6_NOTES.md for the real numbers from the last run.
 """

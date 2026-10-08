@@ -43,7 +43,9 @@ def analyzer(tmp_path_factory):
         {"model_state": model.state_dict(), "epoch": 1, "caveat": "test"},
         root / "best.pt",
     )
-    return Analyzer(root, root / "training.yaml", "configs/preprocessing.yaml")
+    analyzer = Analyzer(root, root / "training.yaml", "configs/preprocessing.yaml")
+    analyzer.quality_gate = False  # toy synthetic patches; the gate is tested in test_field_quality.py
+    return analyzer
 
 
 @pytest.fixture

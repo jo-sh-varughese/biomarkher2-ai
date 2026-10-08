@@ -31,6 +31,7 @@ const AdminSessions = lazy(() => import("./pages/admin/Sessions.jsx"));
 const AdminAudit = lazy(() => import("./pages/admin/Audit.jsx"));
 const AdminSettings = lazy(() => import("./pages/admin/Settings.jsx"));
 const AdminSystem = lazy(() => import("./pages/admin/System.jsx"));
+const AdminLearning = lazy(() => import("./pages/admin/Learning.jsx"));
 
 const blank = <div style={{ minHeight: "100dvh", background: "var(--bg)" }} />;
 
@@ -108,6 +109,7 @@ export default function App() {
           <Route path="audit" element={<AdminPage><AdminAudit /></AdminPage>} />
           <Route path="settings" element={<AdminPage><AdminSettings /></AdminPage>} />
           <Route path="system" element={<AdminPage><AdminSystem /></AdminPage>} />
+          <Route path="learning" element={<AdminPage><AdminLearning /></AdminPage>} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

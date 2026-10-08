@@ -10,7 +10,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-CPU--only-EE4C2C?logo=pytorch&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-408%20passing-2f6f5e?logo=pytest&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-514%20passing-2f6f5e?logo=pytest&logoColor=white)
 ![Status](https://img.shields.io/badge/status-active%20development-95531A)
 ![Runs on](https://img.shields.io/badge/runs%20on-CPU%20only-5b6b70)
 ![Docker](https://img.shields.io/badge/docker-packaged-2496ED?logo=docker&logoColor=white)
@@ -170,18 +170,19 @@ one.
 
 ![Phase 1](https://img.shields.io/badge/Phase_1_Preprocessing-done-2f6f5e)
 ![Phase 2](https://img.shields.io/badge/Phase_2_Training-moderate_class_weak-a1530f)
-![Phase 4](https://img.shields.io/badge/Phase_4_Evaluation-smoke--scale-a1530f)
+![Phase 4](https://img.shields.io/badge/Phase_4_Evaluation-done-2f6f5e)
 ![Phase 5](https://img.shields.io/badge/Phase_5_Architecture-done-2f6f5e)
 ![Viewer](https://img.shields.io/badge/Review--viewer-done-2f6f5e)
 
 </div>
 
-Per-class IoU, full-scale run (`artifacts/phase2_unet`) — tissue mean IoU
-**0.746**, pixel accuracy **0.908**:
+Per-class IoU, the adopted 8-epoch run (`artifacts/phase2_unet_8epochs`; the
+4-epoch baseline scored 0.839 / 0.666 / 0.589 / 0.891) — tissue mean IoU
+**0.811**, pixel accuracy **0.938**:
 
 | class | negative | weak (1+) | **moderate (2+)** | strong (3+) |
 |---|---|---|---|---|
-| IoU | 0.839 | 0.666 | **0.589** ⚑ | 0.891 |
+| IoU | 0.898 | 0.778 | **0.657** ⚑ | 0.912 |
 
 ⚑ Moderate (2+) is the class that decides reflex FISH testing, and remains
 the model's weakest — closing that gap is one of the three open workstreams
@@ -206,7 +207,7 @@ the three-person task division: **[`PROJECT_PLAN.md`](PROJECT_PLAN.md)**.
 | Reports | ReportLab (PDF export) |
 | Packaging | Docker + docker-compose |
 | Config | Plain dataclasses + YAML — no Hydra, unknown keys rejected loudly |
-| Tests | pytest — 408 tests, the project's actual specification |
+| Tests | pytest — 514 tests, the project's actual specification |
 
 <br/>
 
@@ -221,7 +222,7 @@ python -m venv .venv
 pip install -r requirements.txt
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-pytest -q                             # 408 passed
+pytest -q                             # 514 passed
 
 pip install -e .                      # registers the `biomark` command (one-off)
 biomark
@@ -237,7 +238,7 @@ recovering from a terminal (`biomark-admin`) are covered in
 
 No Node installed, or want the raw two-step version? `biomark` is just
 `npm run build` (inside `ui/`) followed by `python -m app.server --run
-artifacts/phase2_unet` — see [`ui/README.md`](ui/README.md) and
+artifacts/phase2_unet_8epochs` — see [`ui/README.md`](ui/README.md) and
 [`app/cli.py`](app/cli.py).
 
 Or with Docker (the image builds the portal itself; models are mounted):
@@ -265,7 +266,7 @@ evaluation/       Phase 4 -- conformal prediction, stain variation, CAP/ASCO map
 app/              the portal backend: analysis, accounts + admin API, PDF export
 configs/          YAML configs -- one file fully describes one run
 scripts/          CLI entry points that call into the packages above
-tests/            408 tests -- the project's actual specification
+tests/            514 tests -- the project's actual specification
 tasks/            self-contained task briefs for the three open workstreams
 artifacts/        everything a run produces (gitignored -- regenerable)
 data/             raw dataset + cached pseudo-label targets (gitignored)
@@ -281,7 +282,7 @@ data/             raw dataset + cached pseudo-label targets (gitignored)
 pytest -q
 ```
 
-408 tests, spanning every phase. A real category of them encodes the
+514 tests, spanning every phase. A real category of them encodes the
 project's framing rules as literal assertions — not just correctness checks
 — specifically so a well-intentioned future edit can't erode them quietly.
 See `IMPLEMENTATION_NOTES.md`'s "Testing philosophy".

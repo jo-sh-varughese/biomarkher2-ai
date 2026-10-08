@@ -19,6 +19,7 @@ const TABS = [
   { to: "/admin/audit", icon: "activity", key: "admin.nav.audit" },
   { to: "/admin/settings", icon: "settings", key: "admin.nav.settings" },
   { to: "/admin/system", icon: "server", key: "admin.nav.system" },
+  { to: "/admin/learning", icon: "sparkles", key: "learning.nav" },
 ];
 
 export default function AdminLayout() {

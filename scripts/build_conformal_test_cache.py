@@ -1,6 +1,6 @@
 """Build pseudo-label tiles for the conformal TEST half of the reserved holdout.
 
-    python scripts/build_conformal_test_cache.py --run artifacts/phase2_unet \\
+    python scripts/build_conformal_test_cache.py --run artifacts/phase2_unet_8epochs \\
         --cache data/cache/pseudo_labels_40x_holdout_test
 
 Why this exists. scripts/build_pseudo_labels.py picks its holdout sample with
@@ -55,7 +55,7 @@ def build_test_cache(source, pipeline, cache, patch_ids, training_cache_root=Non
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run", default="artifacts/phase2_unet")
+    parser.add_argument("--run", default="artifacts/phase2_unet_8epochs")
     parser.add_argument("--cache", required=True, help="Destination cache directory.")
     parser.add_argument("--config", default="configs/training.yaml")
     parser.add_argument("--preprocessing-config", default="configs/preprocessing.yaml")

@@ -15,8 +15,8 @@ sent to any outside service.
 | Software | Docker 24+ with Compose v2 | |
 | GPU | not needed | |
 
-Speed on 4 CPU cores: a field about 20-30 s; a whole slide about 10-15 min
-(tumour detection dominates).
+Speed on 4 CPU cores: a field about 20-30 s. A whole slide is a few dozen fields plus an ink check;
+re-time it on your hardware (the earlier figure of 10-15 min included the tumour segmenter, now removed).
 
 ## 2. Files the image does not contain
 
@@ -32,9 +32,9 @@ sha256sum -c artifacts/MODELS.sha256  # every line must say OK
 
 | File | What it is |
 |---|---|
-| `artifacts/phase2_unet/best.pt` (+ `conformal_calibration.npz`, `conformal_calibration_ids.json`) | stain map and its pixel-level conformal calibration |
+| `artifacts/phase2_unet_8epochs/best.pt` (+ `conformal_calibration.npz`, `conformal_calibration_ids.json`) | stain map (the adopted 8-epoch model) and its pixel-level conformal calibration |
 | `artifacts/v2/run_b/best.pt` (+ `prescore_sets.json`) | AI pre-score (ResNet-50 multi-task U-Net) and its conformal prediction-set calibration |
-| `artifacts/tumour/best.pt` | invasive-tumour segmenter (whole slides) |
+| `configs/control_reference.json` (in the repo) | reference DAB signature of a 3+ control, used only with `--control-level 3+` (docs/WHOLE_SLIDE.md) |
 
 Whole-slide files (`.svs`, `.ndpi`, `.tiff`, `.mrxs`, ...) go in `data/slides/`.
 `data/raw/` (example patches for the Field analysis picker) is optional.

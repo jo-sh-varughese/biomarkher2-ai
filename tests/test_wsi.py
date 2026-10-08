@@ -1,6 +1,6 @@
 """Tests for whole-slide analysis (wsi/): reading at physical resolution, safe
-slide ids, the haematoxylin-only transform, the slide pipeline and its safety
-rules. Uses small synthetic "slides" (plain images opened through OpenSlide's
+slide ids, exclusion of control cores and ink, per-slide control calibration,
+the slide pipeline and its safety rules. Uses small synthetic "slides" (plain images opened through OpenSlide's
 ImageSlide), so no real WSI or download is needed."""
 
 from __future__ import annotations
@@ -35,6 +35,9 @@ def _synthetic_slide(path: Path, size: int = 2048) -> Path:
         h[win] = np.maximum(h[win], np.where(rr < 14, 0.9, 0))
         d[win] = np.maximum(d[win], np.where((rr > 30) & (rr < 36), 0.7, 0))
     rgb = od_to_rgb(np.stack([h, d, np.zeros_like(h)], -1) @ build_stain_matrix())
+    # A scanner always adds a little sensor noise; a perfectly flat image is what
+    # the field-quality gate rejects as a drawing or screenshot.
+    rgb = np.clip(rgb.astype(np.int16) + rng.integers(-3, 4, rgb.shape), 0, 255).astype(np.uint8)
     Image.fromarray(rgb).save(path)
     return path
 
@@ -62,33 +65,6 @@ def test_slide_ids_cannot_escape_the_slide_folder(tmp_path):
     with pytest.raises(FileNotFoundError):
         state.path(encode_id("../secret.png"))
     assert [x["name"] for x in list_slides(tmp_path / "slides")] == ["a.png"]
-
-
-def test_haematoxylin_image_ignores_dab():
-    from wsi.tumour import haematoxylin_image
-
-    h = np.full((64, 64), 0.5)
-    h[:, :32] = 0.1
-    with_dab = od_to_rgb(np.stack([h, np.full((64, 64), 0.8), np.zeros_like(h)], -1) @ build_stain_matrix())
-    without = od_to_rgb(np.stack([h, np.zeros((64, 64)), np.zeros_like(h)], -1) @ build_stain_matrix())
-    a = haematoxylin_image(with_dab, "ihc").astype(int)
-    b = haematoxylin_image(without, "ihc").astype(int)
-    assert np.abs(a - b).mean() < 6           # DAB does not change what the segmenter sees
-    assert a[:, 40:].mean() < a[:, :20].mean()  # haematoxylin structure is kept
-
-
-def test_grey_cast_scan_is_not_rendered_as_haematoxylin_everywhere():
-    """A dim/grey scan (seen in BCI) must not turn into a flat purple field."""
-    from wsi.tumour import haematoxylin_image
-
-    h = np.zeros((64, 64))
-    h[20:30, 20:30] = 0.8  # one nucleus on clear background
-    clean = od_to_rgb(np.stack([h, np.zeros_like(h), np.zeros_like(h)], -1) @ build_stain_matrix())
-    grey = (clean.astype(float) * 0.72).astype(np.uint8)  # same slide, 28% less light
-    a = haematoxylin_image(clean, "ihc").astype(int)
-    b = haematoxylin_image(grey, "ihc").astype(int)
-    assert np.abs(a - b).mean() < 6
-    assert b[:10, :10].mean() > 235  # background stays white
 
 
 def test_on_slide_control_cores_are_separated_but_tumour_nests_are_not():
@@ -142,12 +118,13 @@ def test_slide_pipeline_runs_end_to_end_and_reports(tmp_path):
     from wsi.report import build_slide_report_pdf_bytes
 
     s = Slide(_synthetic_slide(tmp_path / "s.png"), mpp_override=0.24)
-    result = SlideAnalyzer(_StubAnalyzer(), None, SlideSettings(max_fields=3)).run(s)
+    result = SlideAnalyzer(_StubAnalyzer(), SlideSettings(max_fields=3)).run(s)
     assert 1 <= len(result["fields"]) <= 3
     assert result["cell_evidence"]["cells_measured"] > 0
-    assert any("not segmented" in f for f in result["flags"])  # no tumour model -> said so
+    assert any("not segmented" in f for f in result["flags"])  # tumour is never segmented -> said so
+    assert result["tissue"]["tumour_segmented"] is False and "tumour" not in result
     assert result["ai_prescore"] is None and result["guidance"]["basis"] == "cell evidence"
-    assert {"overview", "tumour_overlay", "grade_overlay"} <= set(result["images"])
+    assert {"overview", "excluded_overlay", "grade_overlay"} <= set(result["images"])
     ds = result["cell_evidence"]["decision_support"]
     assert ds["pathway"] and ds["certainty"] and ds["qc"]          # ISH decision support at slide level
     assert result["cell_evidence"]["explanation"]["steps"]
@@ -163,7 +140,7 @@ def test_low_magnification_slides_never_get_a_prescore(tmp_path):
         info = {"encoder": "x"}
 
     s = Slide(_synthetic_slide(tmp_path / "s.png"), mpp_override=0.92)
-    result = SlideAnalyzer(_StubAnalyzer(engine=_Engine()), None, SlideSettings(max_fields=2)).run(s)
+    result = SlideAnalyzer(_StubAnalyzer(engine=_Engine()), SlideSettings(max_fields=2)).run(s)
     assert result["ai_prescore"]["shown"] is False and "prescore" not in result["ai_prescore"]
     assert any("below ~20x" in f for f in result["flags"])
     # an unassessable slide must never read as "ISH not indicated"
@@ -182,3 +159,110 @@ def test_tile_route_matches_the_url_openseadragon_requests():
     url = f"/api/slides/{sid}/dzi_files/12/3_4.jpeg"
     hits = [h for m, p, h in table if m == "GET" and re.fullmatch(p, url)]
     assert hits == ["_slide_tile"]
+
+
+# ------------------------------------------------------------ on-slide control calibration
+class _ControlAnalyzer(_StubAnalyzer):
+    def __init__(self, reference=None, level=None):
+        super().__init__()
+        self.control_reference = reference
+        self.control_level = level
+
+
+def _control_slide(tmp_path, dab_scale: float):
+    """A slide that is entirely 'control' tissue, with a chosen DAB strength."""
+    size = 2048
+    rng = np.random.default_rng(1)
+    h = np.full((size, size), 0.15)
+    d = np.zeros((size, size))
+    yy, xx = np.mgrid[:size, :size]
+    for cy, cx in rng.integers(100, size - 100, (60, 2)):
+        rr = np.hypot(yy - cy, xx - cx)
+        h = np.maximum(h, np.where(rr < 14, 0.9, 0))
+        d = np.maximum(d, np.where((rr > 24) & (rr < 34), 0.7 * dab_scale, 0))
+    rgb = od_to_rgb(np.stack([h, d, np.zeros_like(h)], -1) @ build_stain_matrix())
+    path = tmp_path / "ctl.png"
+    Image.fromarray(rgb).save(path)
+    return Slide(path, mpp_override=0.24)
+
+
+def _full_control_map(slide):
+    from wsi.analysis import CONTROL, OVERVIEW_MPP
+
+    overview, factor = slide.overview(OVERVIEW_MPP)
+    return np.full(overview.shape[:2], CONTROL, dtype=np.int8), factor
+
+
+def test_control_is_measured_but_not_applied_unless_the_level_is_declared(tmp_path):
+    from wsi.analysis import Progress, SlideAnalyzer
+
+    slide = _control_slide(tmp_path, 1.0)
+    cls, factor = _full_control_map(slide)
+    reference = {"level": "3+", "p90": 0.9}
+    for analyzer in (_ControlAnalyzer(reference=reference, level=None), _ControlAnalyzer(reference=None, level="3+")):
+        rep, gain = SlideAnalyzer(analyzer)._control_calibration(slide, cls, factor, Progress())
+        assert rep["measured"] and not rep["applied"] and gain is None
+        assert "declare" in rep["reason"] or "reference" in rep["reason"]
+
+
+def test_a_declared_3plus_control_gives_a_gain_that_matches_the_reference(tmp_path):
+    from wsi.analysis import Progress, SlideAnalyzer
+
+    slide = _control_slide(tmp_path, 0.6)                          # a pale run
+    cls, factor = _full_control_map(slide)
+    pale, _ = SlideAnalyzer(_ControlAnalyzer())._control_calibration(slide, cls, factor, Progress())
+    p90 = pale["strongest_p90"]
+    reference = {"level": "3+", "p90": p90 * 1.5}                  # the training site's control came out 1.5x darker
+    rep, gain = SlideAnalyzer(_ControlAnalyzer(reference, "3+"))._control_calibration(slide, cls, factor, Progress())
+    assert rep["applied"] and gain == pytest.approx(1.5, rel=1e-3)
+    assert "x1.50" in rep["reason"]
+
+
+def test_an_implausible_gain_is_refused_rather_than_applied(tmp_path):
+    from wsi.analysis import Progress, SlideAnalyzer
+
+    slide = _control_slide(tmp_path, 1.0)
+    cls, factor = _full_control_map(slide)
+    rep, gain = SlideAnalyzer(_ControlAnalyzer({"level": "3+", "p90": 50.0}, "3+"))._control_calibration(slide, cls, factor, Progress())
+    assert gain is None and not rep["applied"] and "control itself may have failed" in rep["reason"]
+
+
+def test_a_control_level_other_than_3plus_is_never_used(tmp_path):
+    from wsi.analysis import Progress, SlideAnalyzer
+
+    slide = _control_slide(tmp_path, 1.0)
+    cls, factor = _full_control_map(slide)
+    rep, gain = SlideAnalyzer(_ControlAnalyzer({"level": "1+", "p90": 0.4}, "1+"))._control_calibration(slide, cls, factor, Progress())
+    assert gain is None and not rep["applied"]
+
+
+def test_no_control_on_the_slide_means_nothing_to_measure(tmp_path):
+    from wsi.analysis import Progress, SlideAnalyzer
+
+    slide = _control_slide(tmp_path, 1.0)
+    cls, factor = _full_control_map(slide)
+    cls[:] = -1
+    rep, gain = SlideAnalyzer(_ControlAnalyzer({"level": "3+", "p90": 0.5}, "3+"))._control_calibration(slide, cls, factor, Progress())
+    assert rep["cores_found"] == 0 and gain is None and "No on-slide control" in rep["reason"]
+
+
+def test_ink_is_found_without_any_model(tmp_path):
+    """Blue ink / film blocks are excluded by colour alone (the check no longer needs a tumour model)."""
+    from wsi.analysis import ARTEFACT, Progress, SlideAnalyzer
+
+    size = 2048
+    rgb = np.full((size, size, 3), (233, 234, 236), dtype=np.uint8)              # glass
+    rng = np.random.default_rng(0)
+    left = np.full((size, size // 2, 3), (236, 238, 239), dtype=np.uint8)
+    left[rng.random((size, size // 2)) < 0.6] = (120, 110, 150)                   # real tissue
+    rgb[:, : size // 2] = left
+    rgb[:, size // 2:] = np.clip(np.full((size, size // 2, 3), (200, 207, 226)) + rng.normal(0, 4, (size, size // 2, 3)), 0, 255)
+    path = tmp_path / "ink.png"
+    Image.fromarray(rgb).save(path)
+    slide = Slide(path, mpp_override=0.5)
+    overview, factor = slide.overview(8.0)
+    tissue = np.ones(overview.shape[:2], dtype=bool)
+    cls = SlideAnalyzer(_StubAnalyzer())._artefact_map(slide, tissue, factor, Progress(), (233, 234, 236))
+    half = cls.shape[1] // 2
+    assert (cls[:, half + 2:] == ARTEFACT).mean() > 0.8       # the inked half
+    assert (cls[:, : half - 2] == ARTEFACT).mean() < 0.2      # the tissue half is left alone

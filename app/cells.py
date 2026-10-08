@@ -93,7 +93,7 @@ def detect_nuclei(h: np.ndarray, tissue: np.ndarray, p: CellParams, d: np.ndarra
 
     hs = ndimage.gaussian_filter(h, p.nucleus_sigma)
     values = hs[tissue]
-    if values.size < 500:
+    if values.size < 500 or float(np.ptp(values)) < 1e-3:
         return np.zeros(h.shape, dtype=np.int32)
     thr = max(0.12, float(threshold_otsu(values)))
     mask = tissue & (hs > thr)
@@ -140,7 +140,15 @@ def detect_cells_from_membranes(d: np.ndarray, tissue: np.ndarray, p: CellParams
     ds = ndimage.gaussian_filter(d, 1.0 * p.nucleus_sigma / 2.0)
     if tissue.sum() < 500:
         return np.zeros(d.shape, dtype=np.int32)
-    _, t2 = threshold_multiotsu(ds[tissue], classes=3)
+    vals = ds[tissue]
+    # A uniform field (a flat colour fill, or a field saturated with stain) has
+    # no three-level structure to split; there are no membranes to find.
+    if float(np.ptp(vals)) < 1e-3:
+        return np.zeros(d.shape, dtype=np.int32)
+    try:
+        _, t2 = threshold_multiotsu(vals, classes=3)
+    except ValueError:
+        return np.zeros(d.shape, dtype=np.int32)
     memb = tissue & (ds > t2)
     memb = ndimage.binary_opening(memb, iterations=1) | (tissue & (ds > t2 * 1.15))
     memb = ndimage.binary_closing(memb, iterations=2)

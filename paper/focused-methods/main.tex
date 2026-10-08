@@ -37,8 +37,8 @@
 
 \begin{document}
 
-\title{DAB-Guided Weak Supervision and Stain-Shift-Weighted Conformal\\
-Prediction for HER2 IHC Intensity Segmentation
+\title{From Pseudo-Labels to Expert Grades: An Audit of DAB-Guided Weak\\
+Supervision and Conformal Calibration for HER2 IHC at Three Hospitals
 \thanks{Funding acknowledgment withheld pending submission.}
 }
 
@@ -64,7 +64,7 @@ nadeemajahan.b23cs2146@mbcet.ac.in}
 Thiruvananthapuram, India \\
 aiswaryams.b23cs2111@mbcet.ac.in}
 \and
-\IEEEauthorblockN{Rishika Pratap Jadgale}
+\IEEEauthorblockN{Rishika Pratap Jagdale}
 \IEEEauthorblockA{
 \textit{Department of Computer Science and Engineering} \\
 \textit{Mar Baselios College of Engineering and Technology} \\
@@ -82,36 +82,22 @@ jesna.mohan@mbcet.ac.in}
 \maketitle
 
 \begin{abstract}
-Human epidermal growth factor receptor 2 (HER2) immunohistochemistry (IHC)
-scoring assigns breast cancer tissue a 0/1+/2+/3+ membrane-staining
-intensity category that determines eligibility for targeted therapy; the
-2+ ("equivocal") category triggers a second, costly confirmatory test.
-Manual scoring at class boundaries is subjective, and, to our knowledge, no
-public dataset provides pixel-level HER2 IHC annotations, so a segmentation
-model aimed at this problem has no direct ground truth to train on. We
-address this gap with two contributions. First, we train a ResNet18-UNet
-segmentation network on pseudo-labels produced by classical DAB
-optical-density thresholding, and feed the network that same physically
-meaningful DAB channel as a fourth input alongside RGB -- an inductive bias
-that lets the model exploit the exact quantity its own weak-supervision
-targets are computed from. Evaluated head-to-head against a SegFormer-B0
-baseline under identical data, split, seed, and a strict CPU-only compute
-budget, this resolves a diagnosed sub-pixel resolution failure: moderate
-(2+) intensity segmentation improves from an IoU of 0.00006 (the class is
-effectively never predicted) to 0.589, with every other class improving as
-well, at roughly three-fold rather than an order-of-magnitude increase in
-per-image compute. Second, we generalize an existing image-level, binary
-conformal prediction method for HER2 status classification to pixel-level,
-five-class segmentation output, and extend it with stain-shift-weighted
-calibration for cross-institution robustness. We validate finite-sample
-coverage on real held-out data and report the method's honest limits:
-calibration against weak-supervision pseudo-labels rather than pathologist
-ground truth, and a single-source dataset on which the stain-shift
-weighting mechanism is exercised but has nothing genuine to correct. Every
-reported number carries the caveats -- weak supervision, no slide-level
-split, smoke-scale evaluation -- required to read it correctly; this paper
-reports what was actually measured, not what the method aims for once real
-multi-institution, pathologist-annotated data exists.
+HER2 immunohistochemistry (IHC) is scored 0/1+/2+/3+ from membrane-staining intensity, and no public dataset gives pixel-level
+annotations for it. We train a ResNet18-UNet on pseudo-labels from classical DAB optical-density thresholding and feed the network
+that same DAB channel as a fourth input. Against a SegFormer-B0 baseline under identical data, split and compute, a
+resolution-preserving decoder lifts moderate (2+) IoU from 0.00006 to 0.589 after four epochs, and to 0.657 (tissue mean IoU 0.811)
+after eight. We then audit the weak-supervision loop at three hospitals. Fed through the same three-feature head, the network's area fractions grade the
+expert HER2 category as well as the threshold rule applied directly: accuracy 0.760 versus 0.750 on 200 held-out images (paired
+difference $+0.010$, 95\% bootstrap interval $[0.000,0.025]$), and no difference at BCI (0.299 versus 0.278) or ADEL (0.385 versus 0.373, $n=418$). A network trained on pseudo-labels alone is therefore a learned approximation of its
+teacher. A multi-task model that adds expert image-level grades (and a stronger encoder and 38 times more
+patches) gains 15 points on the same in-domain images (0.900, paired $+0.150$, $[0.075,0.225]$) but not significantly at a hospital it has never seen
+(BCI: $+0.024$ against a stain-normalised teacher; ADEL: $+0.026$, $[-0.019,+0.072]$), and the version trained on two sites collapses at the third (ADEL accuracy 0.196). Conformal prediction of the expert grade
+loses its guarantee at both other hospitals: standard split-conformal prediction promised 95\% coverage and delivered 58.9\% (BCI) and 74.2\% (ADEL) for the model that never saw them;
+Macenko stain-similarity weighting raises BCI coverage to 63.6\% and 91.7\% for the two models, a partial repair; likelihood-ratio weighting reaches 99\%
+only by returning nearly every grade; 25 labelled local cases restore 95.9\% (BCI) and 96.4\% (ADEL), with sets of about 3.7 of 4 grades at ADEL. At the training hospital, splitting calibration and
+test sets by inferred slide instead of by patch leaves mean coverage nearly intact but widens its spread across calibrations several-fold.
+Targets are DAB pseudo-labels or public image-level grades, slide identity is inferred, and the other hospitals are single public datasets; we report
+what was measured and where it falls short.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -152,39 +138,29 @@ single point prediction per pixel, with no indication of when the model is
 unsure, invites over-trust at exactly the borderline cases where it matters
 most. Conformal prediction offers a distribution-free, finite-sample
 coverage guarantee for exactly this purpose, but existing work applying it
-to HER2 status operates at image level on a binary positive/negative label
-\cite{pintawong2025}, and even the most recent conformal-prediction
-treatments of medical image segmentation
+to HER2 IHC under a real cross-institution stain shift is rarely examined, and
+conformal-prediction treatments of medical image segmentation
 \cite{mossina2025,borden2026} are architecture- and task-agnostic
 uncertainty wrappers, not calibrated against a weakly-supervised,
-ordinal, clinically-defined class structure. A pixel-level, five-class
-segmentation output for an ordinal clinical scale needs the method
-generalized and re-grounded, not applied as-is.
+ordinal, clinically-defined class structure. We therefore evaluate conformal
+prediction where expert labels exist, at the level of the HER2 grade.
 
 This paper makes four contributions:
 
 \begin{enumerate}
-\item A 4-channel (RGB + DAB optical density) input fusion for a
-  ResNet18-UNet that resolves a specific, diagnosed sub-pixel resolution
-  failure of a transformer segmentation baseline on the class that decides
-  reflex FISH testing.
-\item A generalization of image-level, binary conformal HER2
-  classification \cite{pintawong2025} to pixel-level, five-class
-  segmentation, extended with stain-shift-weighted calibration
-  \cite{tibshirani2019} for cross-institution deployment.
-\item A head-to-head empirical comparison of two architectures under
-  identical data, split, seed, and a strict CPU-only compute budget, with
-  the full, honest trajectory reported -- including a smoke-scale result
-  that initially pointed the wrong way -- together with a compute/accuracy
-  characterization of the trade-off the winning architecture actually buys.
-\item A methodological stance, carried through every reported number: each
-  result is stated with the caveats required to read it correctly --
-  pseudo-label supervision, an inferred rather than verified
-  train/validation partition, and a single-source dataset on which the
-  stain-shift correction has nothing genuine to demonstrate a benefit
-  against -- and we further formalize this weak-supervision setting
-  (Section~\ref{sec:formulation}) so the circularity it introduces is
-  stated as a property of the estimator, not merely as a caveat in prose.
+\item A 4-channel (RGB + DAB optical density) input fusion for a ResNet18-UNet that resolves a diagnosed sub-pixel resolution failure of a
+  transformer baseline on the class that decides reflex ISH testing (Section~\ref{sec:diagnosis}).
+\item An \emph{audit of the weak-supervision loop}: a test of whether the trained network carries information about the expert grade that
+  its teacher, the DAB threshold rule, does not (it does not), and a comparison with a multi-task model that adds expert grades, which
+  does in-domain but not significantly at an unseen hospital, and the version trained on two sites collapses at a third (Sections~\ref{sec:audit} and~\ref{sec:expert}).
+\item An empirical study of conformal prediction of the expert HER2 grade under a real second-hospital stain shift: standard conformal loses
+  its guarantee, Macenko stain-similarity weighting~\cite{tibshirani2019,macenko2009} partially repairs it, and a few dozen local cases restore it.
+  The same study shows that splitting by inferred slide rather than by patch widens the spread of coverage
+  (Section~\ref{sec:results-conformal}).
+\item A formalization of the weak-supervision setting (Section~\ref{sec:formulation}) so that the circularity it introduces is a stated
+  property of the estimator, and every result carries its caveats: pseudo-label targets, an inferred train/validation partition and a single
+  second hospital. The segmentation network (ResNet18-UNet) and the image-level grade model used for conformal prediction (a ResNet-50
+  multi-task U-Net) are different models, and each section says which it uses.
 \end{enumerate}
 
 \section{Related Work}
@@ -252,13 +228,8 @@ prediction has recently been used to wrap U-Net segmentation output with
 morphological prediction sets \cite{mossina2025} and to quantify
 region-level segmentation uncertainty in clinical workflows
 \cite{borden2026}; both are general-purpose, task-agnostic wrappers over an
-already-trained segmentation model. Pintawong et al.\ \cite{pintawong2025}
-apply inductive conformal prediction with a hinge nonconformity score to
-binary, image-level HER2 status classification calibrated against
-DISH-confirmed ground truth -- the method we generalize to pixel-level,
-five-class segmentation, calibrated against pseudo-labels in the absence of
-pathologist ground truth, and extend with a stain-similarity weighting
-mechanism specific to the cross-institution deployment setting.
+already-trained segmentation model. We use the standard inductive construction for the four-grade image-level problem, add a stain-similarity weighting for
+cross-institution calibration, and measure what it does under a real second-hospital shift.
 
 \section{Dataset and the Weak-Supervision Problem}
 \label{sec:dataset}
@@ -571,17 +542,18 @@ class as if it did not exist. This is the failure the U-Net decoder and the
 \subsection{Stain-Shift-Weighted Conformal Prediction}
 \label{sec:conformal-method}
 
-We generalize the inductive conformal prediction recipe of Pintawong et
-al.\ \cite{pintawong2025} in two directions: from binary to $C=5$ classes,
-and from one prediction per image to one prediction per pixel.
+The method is defined for any softmax output $p(x)\in\mathbb{R}^C$: for
+pixels ($C=5$) or for an image-level grade ($C=4$). It follows the inductive
+conformal recipe with a multi-class score and stain-similarity weights.
+Section~\ref{sec:results-conformal} evaluates it at image level, where expert grades exist;
+a pixel-level evaluation would be against pseudo-labels only and is not reported.
 
 \textbf{Nonconformity score.} For a pixel with softmax output $p(x) \in
 \mathbb{R}^C$, the hinge nonconformity score for class $c$ is
 \begin{equation}
 s_c(x) = 1 - p_c(x),
 \end{equation}
-the direct multi-class generalization \cite{sadinle2019} of the base
-paper's binary Eq.~2.
+the multi-class least-ambiguous-set score \cite{sadinle2019}.
 
 \textbf{Per-class calibration quantile.} For each class $c$, calibration
 scores $\{s_c(x_i)\}_{i=1}^{n_c}$ are collected from every calibration pixel
@@ -605,7 +577,10 @@ kernel evaluated at zero distance, so the test point's self-similarity
 weight sits on the same scale as every calibration weight rather than an
 arbitrary constant -- and the weighted quantile is the smallest score at
 which cumulative normalized weight reaches $1-\alpha$. Passing no test
-descriptor recovers the unweighted quantile exactly.
+descriptor recovers the unweighted quantile exactly. The weights are a
+kernel-similarity heuristic, not an estimate of the likelihood ratio; we also
+evaluate the likelihood-ratio weights of \cite{tibshirani2019} (a cross-fitted
+domain classifier on the same descriptors) for comparison.
 
 \begin{proposition}[Coverage under exchangeability]
 \label{prop:coverage}
@@ -617,16 +592,15 @@ over the randomness of the calibration draw \cite{vovk2005}. The
 stain-shift-weighted variant restores this guarantee under a covariate
 shift between calibration and test stain distributions when the weights
 $w_i$ correctly approximate the likelihood ratio between them
-\cite{tibshirani2019}; Section~\ref{sec:results-conformal} reports the
-empirical coverage this proposition predicts, and
-Section~\ref{sec:limitations} states plainly that on our single-source
-dataset the weighted and unweighted cases are not expected to differ,
-since there is no real covariate shift for the weights to correct.
+\cite{tibshirani2019}; Section~\ref{sec:results-conformal} measures how far a
+heuristic kernel weight gets towards this under a real shift, and
+Section~\ref{sec:limitations} states why it cannot be expected to restore
+coverage fully: part of the shift is in how institutions grade, which is not a
+covariate shift at all.
 \end{proposition}
 
 \textbf{Prediction sets and patch-level rollup.} A pixel's prediction set
-is $\{c : s_c(x) \le \hat q_c(\alpha)\}$. Following the base paper's
-image-to-case rollup (their Table~2), each pixel's set reduces to a status
+is $\{c : s_c(x) \le \hat q_c(\alpha)\}$. For a pixel-level use, each pixel's set reduces to a status
 -- a definite class if the set is a singleton, \textsc{ambiguous}
 otherwise -- and a patch's status is whichever definite class occupies a
 strict majority of its pixels, else \textsc{ambiguous}.
@@ -651,9 +625,9 @@ fit/validation data used for model selection.
 
 All experiments run CPU-only (no GPU available), PyTorch, batch size 2 with
 gradient accumulation over 4 steps, AdamW at learning rate $10^{-4}$ with
-5\% linear warmup, 4 epochs, seed 20260805. The architecture comparison
+5\% linear warmup, seed 20260805. The architecture comparison
 (Section~\ref{sec:archresults}) uses identical data, split and seed for
-both models so the comparison isolates the architecture choice.
+both models, trained for 4 epochs, so the comparison isolates the architecture choice. The final U-Net (Table~\ref{tab:perclass}) was then trained for 8 epochs with the same settings and the epoch chosen on validation tissue mean IoU.
 
 \subsection{Architecture Comparison}
 \label{sec:archresults}
@@ -732,20 +706,22 @@ staining intensities, with a per-example pixel-disagreement rate.
 
 \begin{table}[t]
 \centering
-\caption{Per-class validation metrics, ResNet18-UNet, best epoch (4/4).
-Same validation-set caveat as Table~\ref{tab:archcompare}.}
+\caption{Per-class validation metrics, ResNet18-UNet trained for 8 epochs, selected epoch 6.
+Same validation-set caveat as Table~\ref{tab:archcompare}. The 4-epoch
+model of Table~\ref{tab:archcompare} reached tissue mean IoU 0.746 and
+moderate IoU 0.589.}
 \label{tab:perclass}
 \begin{tabular}{lrrrr}
 \toprule
 Class & IoU & Dice & Precision & Recall \\
 \midrule
-Background & 0.861 & 0.925 & 0.881 & 0.973 \\
-Negative & 0.839 & 0.912 & 0.974 & 0.858 \\
-Weak (1+) & 0.666 & 0.799 & 0.710 & 0.915 \\
-Moderate (2+) & 0.589 & 0.741 & 0.727 & 0.757 \\
-Strong (3+) & 0.891 & 0.942 & 0.950 & 0.935 \\
+Background & 0.896 & 0.945 & 0.940 & 0.950 \\
+Negative & 0.898 & 0.946 & 0.954 & 0.938 \\
+Weak (1+) & 0.778 & 0.875 & 0.849 & 0.903 \\
+Moderate (2+) & 0.657 & 0.793 & 0.773 & 0.814 \\
+Strong (3+) & 0.912 & 0.954 & 0.961 & 0.947 \\
 \midrule
-\multicolumn{5}{l}{Tissue mean IoU: 0.746 \quad Pixel accuracy: 0.908} \\
+\multicolumn{5}{l}{Tissue mean IoU: 0.811 \quad Pixel accuracy: 0.938} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -753,8 +729,8 @@ Strong (3+) & 0.891 & 0.942 & 0.950 & 0.935 \\
 \begin{figure*}[t]
 \centering
 \includegraphics[width=0.95\textwidth]{../figures/unet_training_curves.png}
-\caption{Training loss, loss components, and validation metrics across 4
-epochs for the winning ResNet18-UNet run. Validation numbers are optimistic
+\caption{Training loss, loss components, and validation metrics across the
+4 epochs of the ResNet18-UNet run used in the architecture comparison. Validation numbers are optimistic
 (see Table~\ref{tab:splitsizes}); shown for training diagnostics, not
 generalization claims.}
 \label{fig:training}
@@ -779,67 +755,180 @@ Section~\ref{sec:diagnosis}.}
 \label{fig:preview}
 \end{figure*}
 
-\subsection{Conformal Prediction Results}
-\label{sec:results-conformal}
+\subsection{Audit: Does the Network Know More Than Its Teacher?}
+\label{sec:audit}
 
-We calibrate and evaluate the method of Section~\ref{sec:conformal-method}
-against the winning U-Net checkpoint, using a smoke-scale split of the
-reserved holdout set (40 calibration source patches; the corresponding test
-half yields 52 held-out tiles, 10{,}595{,}420 tissue pixels). A full-scale
-run over the entire $\approx$1{,}900-patch holdout set is software-ready but
-unrun -- CPU-only, at the per-tile inference cost measured in
-Section~\ref{sec:archresults}, this is a multi-hour job, the same order of
-cost as a full training run.
+The network is trained to reproduce the threshold rule $T_\tau$ (Section~\ref{sec:formulation}); agreement with $T_\tau$ cannot show that it
+measures HER2. The non-circular test is downstream: take the per-image area fractions of weak, moderate and strong staining from (i) the
+network and (ii) the rule applied directly, feed each through the same logistic head fitted on 200 source-site fit images, and compare each with the
+\emph{expert} HER2 category. Evaluation: 200 held-out source images, 338 BCI images (second hospital) with raw colours and with site-level stain
+normalisation, and the 418 images of ADEL\cite{adel2025} (third hospital; centre-cropped to at most $1024\times1024$ at native scale, pixel size undocumented).
 
 \begin{table}[t]
 \centering
-\caption{Pixel-level conformal prediction, smoke-scale test set
-(52 tiles, 10{,}595{,}420 tissue pixels), calibrated and evaluated against
-the winning U-Net checkpoint.}
-\label{tab:conformal}
-\begin{tabular}{lrrrrrr}
+\caption{Grading the expert HER2 category from the network's versus the rule's area fractions (same head). 95\% bootstrap intervals in brackets.}
+\label{tab:audit}
+\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrrr}
 \toprule
-& \multicolumn{3}{c}{Unweighted} & \multicolumn{3}{c}{Stain-shift weighted} \\
-$\alpha$ & Misc. & Amb. & Acc. & Misc. & Amb. & Acc. \\
+ & Network & Rule & Difference\\
 \midrule
-0.01 & 0.009 & 0.216 & 0.992 & 0.010 & 0.213 & 0.992 \\
-0.05 & 0.044 & 0.110 & 0.971 & 0.047 & 0.106 & 0.969 \\
-0.10 & 0.089 & 0.072 & 0.950 & 0.093 & 0.072 & 0.949 \\
-0.15 & 0.135 & 0.090 & 0.945 & 0.141 & 0.098 & 0.947 \\
-0.20 & 0.183 & 0.142 & 0.953 & 0.189 & 0.151 & 0.955 \\
-0.30 & 0.282 & 0.258 & 0.967 & 0.288 & 0.265 & 0.969 \\
-0.50 & 0.489 & 0.480 & 0.983 & 0.491 & 0.482 & 0.983 \\
+\multicolumn{4}{l}{\textit{Source holdout, $n=200$}}\\
+Accuracy & 0.760 [.700, .815] & 0.750 [.690, .805] & $+.010$ [.000, .025]\\
+QWK & 0.904 [.869, .931] & 0.900 [.865, .928] & \\
+\multicolumn{4}{l}{\textit{BCI raw, $n=338$}}\\
+Accuracy & 0.299 [.251, .346] & 0.278 [.234, .328] & $+.021$ [$-.018$, .059]\\
+QWK & 0.380 [.301, .450] & 0.331 [.261, .396] & \\
+\multicolumn{4}{l}{\textit{BCI site-normalised, $n=338$}}\\
+Accuracy & 0.399 [.346, .453] & 0.396 [.346, .447] & $+.003$ [$-.030$, .033]\\
+QWK & 0.304 [.195, .397] & 0.311 [.202, .401] & \\
+\multicolumn{4}{l}{\textit{ADEL (third hospital, native colours), $n=418$}}\\
+Accuracy & 0.385 [.340, .433] & 0.373 [.328, .419] & $+.012$ [$-.012$, .036]\\
+QWK & 0.322 & 0.529 & \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=0.95\textwidth]{../figures/unet_conformal_curves.png}
-\caption{Miscoverage, ambiguity and singleton accuracy across the
-significance-level grid, unweighted vs.\ stain-shift weighted, evaluated
-against the winning U-Net checkpoint.}
-\label{fig:conformal}
-\end{figure*}
+Table~\ref{tab:audit} shows no meaningful difference. On the source holdout the network is better by one point with an interval that touches
+zero, and at the second and third hospitals the differences are within noise (at ADEL the rule even has the higher weighted kappa, 0.529 against 0.322). The network therefore reproduces its teacher and inherits its
+failure at the second hospital; it does not improve grade-level information, so a network trained this way should be presented as a learned,
+fast approximation of an inspectable rule, and its value must rest on something the audit does not test (for example robustness to artefacts on
+which the rule fails), not on a grading gain. Both heads are fitted on one site and the audit is on 200 and 338 images, so small differences
+would not be detectable.
 
-Table~\ref{tab:conformal} and Fig.~\ref{fig:conformal} show two things
-worth reading directly, exactly as Proposition~\ref{prop:coverage}
-predicts. First, \textbf{miscoverage tracks $\alpha$ closely}
-(e.g.\ 0.044 at $\alpha=0.05$, 0.089 at $\alpha=0.10$) -- the finite-sample
-coverage guarantee holding on real held-out data, the same validation the
-base paper's own coverage analysis performs. Second, \textbf{weighted and
-unweighted are close at every row}. This is expected, not a failure of the
-mechanism: HER2\_IHC\_40X is single-source, so there is no genuine
-cross-institution stain shift for the weighting to correct, and
-Proposition~\ref{prop:coverage} does not predict a divergence in that
-regime. The mechanism itself is validated separately against
-deliberately-constructed synthetic multi-source shift in our test suite,
-where it measurably favours nearby calibration evidence; on this dataset it
-can only be exercised, not shown to help, and we report that honestly
-rather than implying a benefit the data cannot demonstrate. Patch-level
-accuracy was 1.000 at every $\alpha$ in this run; at 52 test tiles this is
-a smoke-sample observation, not a claim about patch-level accuracy at
-scale.
+\subsection{Adding Expert Supervision}
+\label{sec:expert}
+
+The project's second-generation model (``v2'') changes what the network learns from. It keeps a U-Net decoder trained on the same pseudo-label rule, and adds
+a score head on the encoder, trained on the real 0/1+/2+/3+ patch labels with attention pooling over the tiles of a patch. It also replaces the ResNet18
+encoder with a ResNet-50 initialised from pathology self-supervised weights and trains on all 7{,}729 fit patches instead of the 200 that fit a CPU budget,
+with stain, zoom, blur and noise augmentation. \emph{Model~A} trains on the training site only; \emph{Model~B} adds BCI's training split.
+Table~\ref{tab:expert} compares them with the audit's two heads on the \emph{same} images.
+
+\begin{table}[t]
+\centering
+\caption{Accuracy against the expert category on the same images. Heads in the first two rows: DAB-pseudo-label network and the threshold rule (Table~\ref{tab:audit}). Paired differences are against the rule head; 95\% bootstrap intervals. Model B has seen BCI's training split, so its BCI column is a seen-site result; ADEL is unseen by both.}
+\label{tab:expert}
+\scriptsize\setlength{\tabcolsep}{3pt}
+\resizebox{\columnwidth}{!}{\begin{tabular}{lrrrr}
+\toprule
+ & Source (200) & BCI raw (338) & vs norm. rule & ADEL (418)\\
+\midrule
+Pseudo-label net + head & 0.760 & 0.299 & -- & 0.385\\
+Threshold rule + head & 0.750 & 0.278 & 0.396 (norm.) & 0.373\\
+v2 Model A & 0.900 [.86, .94] & 0.420 [.37, .47] & $+.024$ [$-.03$, .08] & 0.400 [.35, .45]\\
+\quad paired vs rule (raw) & $+.150$ [.08, .23] & $+.142$ [.09, .20] & & $+.026$ [$-.02$, .07]\\
+v2 Model B (BCI seen) & 0.915 [.88, .95] & 0.722 [.68, .77] & -- & 0.196 [.16, .23]\\
+\end{tabular}}
+\end{table}
+
+In the training domain the expert-supervised model is 15 points better than the teacher-derived features, with a paired interval far from zero (Model~A
+0.900 versus 0.750; QWK 0.953 versus 0.900). At a hospital it never saw (Model~A on BCI, raw colours) it is 14 points better than the raw-colour teacher, but the
+teacher with site-level stain normalisation (0.396) closes almost all of that (difference $+0.024$, interval $[-0.033,0.080]$, not significant): the cross-site
+gain is mostly a colour correction available to the teacher too. Model~B reaches 0.722 on BCI only because it trained on that hospital, and at ADEL, which neither model has seen, the two-site model B predicts almost every image 2+
+(accuracy 0.196, QWK 0.04, AUC for 0 versus 1+ 0.53; 20.3 points below Model~A, paired interval $[-26.6,-14.3]$), while Model~A is 2.6 points above the rule, not significantly. Training on more sites
+did not make the model robust to a further hospital; it made it worse. Two limits apply. The v2 model differs from
+the audited network in three ways at once (expert labels, 38 times more data, a stronger encoder), so the table shows what the full system gains, not which factor
+does it; separating them needs a pseudo-label-only run at v2 scale, which our budget did not allow. And the 200-image subset is balanced by grade, so accuracies
+are not those of the full 1{,}904-image holdout (Model~B: 92.3\%, QWK 0.975).
+
+\subsection{Conformal Prediction Under a Second Hospital}
+\label{sec:results-conformal}
+
+\textbf{Setup.} The unit is an image-level HER2 grade (0/1+/2+/3+) with the
+expert grade as label and the least-ambiguous-set score. We calibrate on 951
+held-out training-site images and test on the other 953 (same hospital) and on
+338 test images of BCI \cite{liu2022} (a second hospital, different scanner;
+case scores from the pathology report). \emph{Run~A} is a model that never saw
+BCI, a genuine cross-institution test; \emph{Run~B} is the deployed model,
+which was trained with BCI's training split. The kernel stain weights use the
+corrected Macenko descriptor (Section~\ref{sec:preprocessing}); an earlier
+version of this study used a descriptor with an orientation fault and is
+superseded. Target coverage is 95\%.
+
+\begin{table}[t]
+\centering
+\caption{Coverage at the second hospital, target 95\%.}
+\label{tab:conformal}
+\resizebox{\columnwidth}{!}{\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{BCI} & \multicolumn{2}{c}{ADEL}\\
+Calibration & Run A & Run B & Run A & Run B \\
+\midrule
+Unweighted & 58.9 & 82.2 & 74.2 (2.4) & 28.0 (1.3) \\
+Stain-similarity weighted (kernel) & 63.6 & 91.7 & -- & -- \\
+Label-shift weighted, oracle prior \cite{podkopaev2021} & 62.7 (1.7) & 92.6 (1.7) & 78.7 (2.6) & 38.8 (1.7) \\
+Label-shift weighted, estimated prior & 54.1 (1.3) & 78.7 (1.1) & -- & -- \\
+Likelihood-ratio weighted & 99.7 (3.9) & 99.1 (3.7) & -- & -- \\
+25 local labelled cases & 95.9 (3.8) & 95.9 (2.1) & 96.4 (3.7) & 96.3 (3.9) \\
+\bottomrule
+\end{tabular}}
+
+\smallskip\footnotesize Coverage in \%, target 95\%; mean set size (of 4 grades) in parentheses where measured. Stain-similarity weights need stain descriptors, which were extracted for BCI only. BCI: 338-image test subset; ADEL: all 418 images.
+\end{table}
+
+\textbf{Results.} At the training hospital every method holds its target
+(Run~B: 93.6--94.9\% at a 95\% target, 89.1--90.0\% at 90\%). At the second
+hospital (Table~\ref{tab:conformal}) standard conformal prediction loses its
+guarantee: 95\% promised, 58.9\% (Run~A) and 82.2\% (Run~B) delivered.
+Stain-similarity weighting improves both, by 4.7 and 9.5 points, and is the
+method's real, measured contribution; it does \emph{not} restore coverage,
+because part of the shift is in how the two institutions grade, which no
+covariate weighting can correct. Likelihood-ratio weighting restores validity
+but only by returning nearly every grade: the two hospitals' stain features are
+almost perfectly separable (domain AUC 0.999, effective calibration size 2), so
+the weights concentrate on a handful of cases and the sets become uninformative.
+At ADEL, a hospital whose images neither model has seen, unweighted conformal prediction delivers 74.2\% for Model~A and 28.0\% for Model~B at a 95\% target, with the oracle-prior label-shift correction at 78.7\% and 38.8\%,
+and 25 local labelled cases restore 96.4\% and 96.3\%, with sets of 3.7 and 3.9 of 4 grades, which is close to returning every grade. A label-shift correction \cite{podkopaev2021}, which reweights calibration cases by the ratio of target to source class priors, is the principled
+alternative to the kernel heuristic when the shift is in case mix (BCI has far fewer grade-0 cases than the training site). With the oracle target prior
+(the true class proportions of the BCI test images, which a laboratory would not know) it reaches 92.6\% for the deployed model, a point above the stain weights, and
+only 62.7\% for the model that never saw BCI; with the prior estimated from unlabelled predictions by confusion-matrix inversion it is worse than not weighting at all (78.7\%, 54.1\%).
+Case mix is therefore part of the shift but not all of it, and a prior estimated from an inaccurate model cannot be trusted.
+Calibrating on 25 labelled cases from the new hospital restores 95.9\%
+coverage for both models and, for the deployed model, with sets of 2.1 grades on
+average. The practical reading is that cross-institution conformal calibration
+needs local labelled cases, and that stain weighting buys a smaller but real
+improvement before they are available.
+
+\textbf{Which model.} The conformal study uses the image-level grade model (Run~A/Run~B, a ResNet-50 multi-task U-Net with a grade head), not the
+ResNet18-UNet of Section~\ref{sec:archresults}; the stain-similarity weights use the Macenko descriptor either way.
+
+\textbf{Slide split versus patch split.} HER2\_IHC\_40X has no slide identifiers, so a random split of patches shares slides between
+calibration and test sets. Patch indices are consecutive within a patch run and the patch grade is constant along each run, so we form
+51 \emph{pseudo-slides} (maximal runs with the same prefix and grade and no index gap above 20; a proxy that can merge slides but not split a run),
+and compare 300 calibrations by patch with 300 by whole pseudo-slides at the training hospital
+(Table~\ref{tab:grouped}).
+
+\begin{table}[t]
+\centering
+\caption{Same-hospital coverage of the LAC conformal set, patch split versus pseudo-slide split (300 calibrations each). Mean, standard
+deviation and 5th percentile of coverage on the unseen half.}
+\label{tab:grouped}
+\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{llcccc}
+\toprule
+Model & Target & Split & Mean & SD & 5th pct.\\
+\midrule
+B & 95\% & patch & 0.950 & 0.010 & 0.934\\
+B & 95\% & slide & 0.939 & 0.038 & 0.878\\
+B & 90\% & patch & 0.901 & 0.014 & 0.879\\
+B & 90\% & slide & 0.877 & 0.080 & 0.711\\
+A & 95\% & patch & 0.950 & 0.010 & 0.931\\
+A & 95\% & slide & 0.924 & 0.066 & 0.775\\
+A & 90\% & patch & 0.901 & 0.013 & 0.880\\
+A & 90\% & slide & 0.871 & 0.107 & 0.648\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Mean coverage is nearly intact (0.94 at a 95\% target for model B, 0.88 at 90\%), as marginal conformal theory allows, but its spread across calibrations
+grows four- to eight-fold and its 5th percentile falls to 0.65--0.88: a laboratory calibrating on a handful of slides cannot count on the average.
+The calibration-hospital numbers above therefore describe an average over many random patch draws, which patch-level splits make look more
+stable than slide-level deployment would be.
+
+\textbf{Not shown.} One second hospital, one scanner and case-level rather than
+field-level labels; no repeated model training; and the weighting is a heuristic
+without a coverage guarantee under concept shift.
 
 \section{Threats to Validity}
 \label{sec:limitations}
@@ -861,38 +950,26 @@ cells; every measurement here is percentage of tissue area, which
 includes stroma, and the two diverge whenever stroma content varies
 (mean tissue fraction 0.45 in class 0 to 0.79 in class 3+).
 
-\textbf{Internal validity.} The held-out set in Table~\ref{tab:splitsizes}
-is inferred from filename structure, not a verified slide-level partition;
-HER2\_IHC\_40X carries no slide identifiers at all. This is the best
-available approximation on this dataset, not a leakage-free guarantee, and
-it threatens any claim that validation or holdout performance reflects
-generalization to unseen \emph{slides} rather than to unseen \emph{patches
-of already-seen slides}.
+\textbf{Internal validity.} The held-out set in Table~\ref{tab:splitsizes} contains all 1{,}847 patches of the dataset authors' WSI-based test split (slides disjoint from their training slides) plus 57 further patches, so it is slide-disjoint from the authors' training slides. It is not guaranteed slide-disjoint from our fitting data: 1{,}000 of the 9{,}093 fit and validation patches (11\%) are outside the authors' WSI-based training set and their slides are unknown. The validation set used for epoch selection is a random draw of patches from the training directory and is optimistic. HER2\_IHC\_40X carries no slide identifiers, so we cannot verify either statement, and the authors' test split holds only about 21 whole slides. Section~\ref{sec:results-conformal} quantifies the effect for conformal coverage with 51 inferred pseudo-slides: the mean is nearly unchanged but the spread across calibrations grows several-fold.
 
-\textbf{External validity.} HER2\_IHC\_40X is single-source. The
-stain-shift-weighted conformal predictor is real, unit-tested, and
-generalizes correctly on synthetic multi-source shift, but this dataset
-offers no genuine cross-institution shift to demonstrate a benefit
-against; its practical value is unconfirmed pending real multi-institution
-data. More broadly, no claim in this paper should be read as evidence of
-performance on the clinical population this project ultimately targets,
-whose slides are not yet digitized.
+\textbf{External validity.} Three public datasets, two external hospitals, each a single source. The conformal
+study shows that coverage fails at both and partly recovers at one; ADEL images were centre-cropped and padded without a documented pixel size, so part of the drop there may be a scale mismatch. BCI labels are case-level scores
+from a report and BCI images are cropped to 512 px, so a crop of a 3+ case may
+contain no stained tumour, and the labels differ in kind from the training
+site's patch grades. No claim here is evidence of performance on the clinical
+population this project ultimately targets, whose slides are not yet digitized.
 
-\textbf{Statistical conclusion validity.} The conformal evaluation in
-Table~\ref{tab:conformal} is real, computed against the actual deployed
-checkpoint, but over 52 of $\approx$1{,}900 available held-out test tiles
--- a full-scale run is software-ready but was not run within this paper's
-compute budget. The inverse-frequency class-weighting result in
-Section~\ref{sec:loss} is a single completed epoch, reported as
-preliminary evidence, not a finished comparison. Neither the architecture
-comparison nor the segmentation results are averaged over multiple seeds,
-owing to the CPU-only compute budget; single-seed results on a
-weakly-supervised target should be read as directional, not as precise
-point estimates with implied confidence intervals.
+\textbf{Statistical conclusion validity.} The conformal coverages are
+computed on 951 calibration and 953 + 338 test images, with the local-calibration
+row averaged over 50 random splits; the other rows are single evaluations.
+The architecture comparison and the segmentation results are single-seed (CPU-only
+compute budget) and should be read as directional. The inverse-frequency
+class-weighting result in Section~\ref{sec:loss} is a single completed epoch,
+reported as preliminary evidence.
 
 \textbf{The remaining open question.} Moderate (2+) is resolved as
 \emph{learnable} (Table~\ref{tab:archcompare}), not as \emph{solved}: at
-IoU 0.589 against 0.67--0.89 for the other stained classes, it remains the
+IoU 0.657 (8 epochs; 0.589 at 4) against 0.78--0.91 for the other stained classes, it remains the
 weakest class by a real margin, and it is precisely the category that
 decides reflex FISH testing. We conjecture, though do not yet test, that
 the highest-value next step is not a further architecture search but
@@ -920,9 +997,7 @@ representativeness: HER2\_IHC\_40X's demographic and institutional
 provenance is not documented at the level clinical deployment would
 require, and every result in this paper should be read as evidence about
 this dataset, not as evidence of population-level clinical validity --
-this is precisely the gap the stain-shift-weighted conformal machinery of
-Section~\ref{sec:conformal-method} is built to eventually address, once
-real multi-institution data exists to calibrate it against. Second,
+Section~\ref{sec:results-conformal} shows that even a modest second-hospital shift breaks nominal coverage, and that local calibration, not stain weighting alone, is what restores it. Second,
 equity of access: by design, every component in this pipeline runs on
 CPU-only commodity hardware; a resource-constrained pathology department
 without GPU infrastructure is not, on that basis alone, excluded from
@@ -937,26 +1012,22 @@ computed by the same deconvolution the weak-supervision targets derive
 from) combined with a resolution-preserving decoder resolves a specific,
 diagnosed failure of a transformer segmentation baseline on HER2 IHC's most
 clinically consequential class, under a strict CPU-only compute budget. We
-further show that an existing binary, image-level conformal prediction
-method for HER2 status generalizes cleanly to pixel-level, multi-class
-segmentation output, with stain-shift weighting available for
-cross-institution deployment once genuinely multi-source data exists to
-exercise it. We formalized the weak-supervision setting this all sits
+further show, on a real second hospital, that standard conformal prediction of
+HER2 grade loses its coverage guarantee (95\% promised; 58.9\% and 82.2\%
+delivered), that stain-similarity weighting repairs part of the loss but not all of it
+(63.6\%, 91.7\%), and that a few dozen labelled local cases restore it (95.9\%).
+We formalized the weak-supervision setting this all sits
 inside (Section~\ref{sec:formulation}) precisely because, on a problem
 with no verified slide-level split and no pixel-level ground truth, a
 number reported without the estimator properties that produced it is not
 reproducible, however precise it looks.
 
-Future work follows directly from Section~\ref{sec:limitations}: a
-full-scale conformal evaluation over the entire reserved holdout set; a
-completed inverse-frequency class-weighting comparison; multi-seed
-replication of the architecture comparison to bound the statistical
-conclusion validity threat identified above; real multi-institution data
-to genuinely exercise stain-shift weighting; real pathologist pixel
-annotations to replace pseudo-label calibration with clinical ground
-truth in both \eqref{eq:erm} and Section~\ref{sec:conformal-method}; and a
-per-cell membrane-completeness reformulation of the moderate (2+) class,
-closer to how ASCO/CAP itself defines the score.
+Future work follows directly from Section~\ref{sec:limitations}: further
+institutions, to test whether stain weighting's partial repair is stable;
+multi-seed replication of the architecture comparison; real pathologist pixel
+annotations to replace pseudo-label supervision; and a per-cell
+membrane-completeness reformulation of the moderate (2+) class, closer to how
+ASCO/CAP itself defines the score.
 
 \section*{Acknowledgment}
 Acknowledgments withheld pending submission.
@@ -967,10 +1038,6 @@ Acknowledgments withheld pending submission.
 Factor Receptor 2 Testing in Breast Cancer: ASCO/CAP Clinical Practice
 Guideline Focused Update,'' \emph{J. Clin. Oncol.}, vol. 36, no. 20,
 pp. 2105--2122, 2018.
-
-\bibitem{pintawong2025} P. Pintawong \emph{et al.}, ``Conformal Prediction
-for Uncertainty Quantification and Reliable HER2 Status Classification in
-Breast Cancer IHC Images,'' \emph{IEEE Access}, 2025.
 
 \bibitem{mossina2025} L. Mossina and C. Friedrich, ``Conformal Prediction
 for Image Segmentation Using Morphological Prediction Sets,'' in
@@ -1041,6 +1108,12 @@ Stat. Assoc.}, vol. 114, no. 525, pp. 223--234, 2019.
 \bibitem{tibshirani2019} R. J. Tibshirani, R. Foygel Barber, E. Cand\`es,
 and A. Ramdas, ``Conformal prediction under covariate shift,'' in
 \emph{Proc. NeurIPS}, 2019.
+
+\bibitem{podkopaev2021} A. Podkopaev and A. Ramdas, ``Distribution-free uncertainty quantification for classification under label shift,'' in \emph{Proc. Conf. Uncertainty in Artificial Intelligence (UAI)}, PMLR vol. 161, 2021, pp. 844--853.
+
+\bibitem{adel2025} ``HER2 breast cancer digital image dataset (ADEL dataset),'' Zenodo, 2025, doi:10.5281/zenodo.15872690.
+
+\bibitem{liu2022} S. Liu \emph{et al.}, ``BCI: Breast cancer immunohistochemical image generation through pyramid pix2pix,'' in \emph{Proc. IEEE/CVF CVPR Workshops}, 2022.
 
 \end{thebibliography}
 

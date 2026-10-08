@@ -39,6 +39,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image
+from scipy import ndimage
 
 from evaluation.conformal import (
     PSEUDO_LABEL_CALIBRATION_CAVEAT,
@@ -302,6 +303,24 @@ def percentages(classes: np.ndarray, tissue: np.ndarray | None = None) -> dict[s
     }
 
 
+def quality_qc(quality: dict) -> list[dict]:
+    """The field-quality verdict as rows of the quality checklist."""
+    rows = [{"check": "Usable HER2 IHC field", "status": "fail" if not quality["assessable"] else "ok",
+             "detail": quality["summary"] or "Brightfield DAB immunostain with measurable tissue and cells."}]
+    for r in quality["reasons"]:
+        if r["code"] in ("few_cells", "little_tissue", "out_of_focus"):
+            continue  # the checklist below has its own rows for these
+        rows.append({"check": r["code"].replace("_", " ").capitalize(), "status": "fail" if r["level"] == "block" else "warn",
+                     "detail": r["text"]})
+    return rows
+
+
+def measure_fallback(rgb: np.ndarray) -> dict:
+    from app.field_quality import measure_image
+
+    return measure_image(rgb)
+
+
 @dataclass
 class PatchAnalysis:
     patch_id: str
@@ -317,6 +336,8 @@ class PatchAnalysis:
     where" for whichever class matters, not just whichever has the most
     area. See isolate_overlays()."""
     disagreement_percent: float = 0.0
+    case_id: str = ""
+    """Content hash of the image (app/learning/store.case_id_for): links reviews and annotations to this case."""
     model_unclassified_percent: float = 0.0
     """Share of the tissue the model labelled background (no intensity class).
     Reported on its own so the model column still adds up honestly."""
@@ -324,6 +345,10 @@ class PatchAnalysis:
     """Gated AI pre-score block (see Analyzer._explain); None when no pre-score model is loaded."""
     cell_evidence: dict | None = None
     guidance: dict | None = None
+    quality: dict | None = None
+    """Field-quality verdict (app/field_quality.py): whether this image can be
+    scored at all, and why not. When ``quality["assessable"]`` is False no grade
+    of any kind (AI pre-score, cell category, ISH suggestion) is returned."""
     conformal: dict | None = None
     """None when no calibration artifact is loaded at all. When a calibrator
     IS loaded, always a dict with at least "available": True -- see
@@ -362,12 +387,14 @@ class PatchAnalysis:
             "baseline_percentages": self.baseline_percentages,
             "disagreement_percent": self.disagreement_percent,
             "model_unclassified_percent": self.model_unclassified_percent,
+            "case_id": self.case_id,
             "images": self.images,
             "isolate": self.isolate,
             "conformal": conformal,
             "ai_prescore": self.ai_prescore,
             "cell_evidence": self.cell_evidence,
             "guidance": self.guidance,
+            "quality": self.quality,
             "caveats": caveats,
         }
 
@@ -599,8 +626,34 @@ class Analyzer:
         }
         return fields, ambiguity_image
 
-    def analyze(self, rgb: np.ndarray, patch_id: str = "uploaded") -> PatchAnalysis:
+    def analyze(self, rgb: np.ndarray, patch_id: str = "uploaded", specimen: str | None = None) -> PatchAnalysis:
+        from app.field_quality import assess, measure_image
+
+        rgb = np.ascontiguousarray(np.asarray(rgb)[..., :3]).astype(np.uint8)
+        if not getattr(self, "quality_gate", True):
+            # Rendering-only use (unit tests on toy patches): no field-quality gate.
+            self._quality_inputs = {"disabled": True}
+            processed = self.pipeline.run(rgb, patch_id=patch_id)
+            return self._finish(rgb, processed, patch_id)
+        measured = measure_image(rgb)
+        # Checks that need no model run first: blank, noise, graphics, H&E, a
+        # nuclear stain, a tiny crop or a non-breast specimen never reach the models.
+        pre_check = assess(measured, specimen=specimen)
+        if not pre_check["assessable"]:
+            return self._not_assessable(rgb, patch_id, pre_check)
         processed = self.pipeline.run(rgb, patch_id=patch_id)
+        # Marker/annotation colour, black ink or deposits and flat graphics are
+        # removed from the tissue before anything is measured on it.
+        artefact = ndimage.binary_dilation(measured["artefact_mask"], iterations=3)
+        tissue_before = int(processed.tissue_mask.sum())
+        if artefact.any():
+            processed.tissue_mask = processed.tissue_mask & ~artefact
+            processed.intensity = np.where(processed.tissue_mask, processed.intensity, 0).astype(processed.intensity.dtype)
+        excluded_percent = 100.0 * (tissue_before - int(processed.tissue_mask.sum())) / max(1, tissue_before)
+        self._quality_inputs = {"measured": measured, "excluded_percent": excluded_percent, "specimen": specimen}
+        return self._finish(rgb, processed, patch_id)
+
+    def _finish(self, rgb: np.ndarray, processed, patch_id: str) -> "PatchAnalysis":
         baseline = processed.intensity
         predicted, probabilities = self._predict_tiles(processed.normalized)
         # The model has no tissue detector of its own; restrict it to the same
@@ -647,7 +700,10 @@ class Analyzer:
             for name, image in isolate_overlays(processed.normalized, predicted).items()
         }
 
-        ai_prescore, cell_evidence, guidance = self._explain(processed, patch_id, images)
+        from app.learning.store import case_id_for
+
+        case_id = case_id_for(processed.original)
+        ai_prescore, cell_evidence, guidance, quality = self._explain(processed, patch_id, images, case_id)
 
         return PatchAnalysis(
             patch_id=patch_id,
@@ -666,9 +722,39 @@ class Analyzer:
             ai_prescore=ai_prescore,
             cell_evidence=cell_evidence,
             guidance=guidance,
+            case_id=case_id,
+            quality=quality,
         )
 
-    def _explain(self, processed, patch_id: str, images: dict) -> tuple[dict | None, dict, dict]:
+    def _not_assessable(self, rgb: np.ndarray, patch_id: str, quality: dict) -> PatchAnalysis:
+        """The answer for an image that cannot be scored: the reasons, the image, and no grade."""
+        from app.field_quality import stained_mask
+        from app.guidance import recommend
+
+        tissue = stained_mask(rgb) if min(rgb.shape[:2]) >= 2 else np.zeros(rgb.shape[:2], bool)
+        guidance = recommend(None, {}, self.site_policy, quality=quality)
+        block = None
+        if self.prescore_engine is not None:
+            block = {"available": True, "site": self.site_policy.get("site"), "gate_status": self.site_policy.get("status"),
+                     "shown": False, "validated": bool(self.site_policy.get("show_scores")), "not_assessable": True,
+                     "withheld_reasons": [r["text"] for r in quality["reasons"] if r["level"] == "block"],
+                     "requires_pathologist_confirmation": True}
+        cell_evidence = {"field_category": None, "cells_measured": 0, "percent": {}, "counts": {}, "flags": [],
+                         "not_assessable": True,
+                         "decision_support": {"qc": quality_qc(quality), "not_assessable": True, "near_2plus": False},
+                         "explanation": None}
+        from app.learning.store import case_id_for
+
+        return PatchAnalysis(
+            patch_id=patch_id, width=int(rgb.shape[1]), height=int(rgb.shape[0]),
+            tissue_percent=round(100 * float(tissue.mean()), 2) if tissue.size else 0.0,
+            model_percentages={}, baseline_percentages={},
+            images={"original": to_data_uri(rgb)}, isolate={},
+            case_id=case_id_for(rgb) if rgb.size else "",
+            ai_prescore=block, cell_evidence=cell_evidence, guidance=guidance, quality=quality,
+        )
+
+    def _explain(self, processed, patch_id: str, images: dict, case_id: str = "") -> tuple[dict | None, dict, dict, dict]:
         """Cell evidence + (gated) AI pre-score + suggested next steps; adds explanation images."""
         from app.cells import analyze_cells, overlay_cells, public_cells
         from app.guidance import recommend
@@ -679,7 +765,38 @@ class Analyzer:
         cell_evidence = dict(cells["summary"])
         cell_evidence["cells"] = public_cells(cells["cells"])[:2000]
 
+        from app.decision import focus_score
+        from app.field_quality import assess, edge_dab_share
+
+        qi = getattr(self, "_quality_inputs", None) or {}
+        tissue = processed.tissue_mask
+        quality = None if qi.get("disabled") else assess(qi.get("measured") or measure_fallback(processed.original),
+                         tissue_percent=100.0 * float(tissue.mean()),
+                         n_cells=int(cells["summary"].get("cells_measured") or 0),
+                         focus=focus_score(processed.normalized, tissue),
+                         edge_share=edge_dab_share(processed.dab, tissue),
+                         excluded_percent=float(qi.get("excluded_percent") or 0.0),
+                         specimen=qi.get("specimen"))
+        self._quality_inputs = None
         policy = self.site_policy
+        if quality is not None and not quality["assessable"]:
+            # No grade of any kind: the cell counts stay visible as measurements,
+            # the category, the AI pre-score and the ISH suggestion do not.
+            from app.guidance import recommend
+
+            block = None
+            if self.prescore_engine is not None:
+                block = {"available": True, "site": policy.get("site"), "gate_status": policy.get("status"),
+                         "shown": False, "validated": bool(policy.get("show_scores")), "not_assessable": True,
+                         "withheld_reasons": [r["text"] for r in quality["reasons"] if r["level"] == "block"],
+                         "requires_pathologist_confirmation": True}
+            cell_evidence["measured_category"] = cell_evidence.get("field_category")
+            cell_evidence["field_category"] = None
+            cell_evidence["not_assessable"] = True
+            cell_evidence["decision_support"] = {"qc": quality_qc(quality), "not_assessable": True, "near_2plus": False}
+            cell_evidence["explanation"] = None
+            return block, cell_evidence, recommend(None, cells["summary"], policy, quality=quality), quality
+
         block = None
         shown = None
         if self.prescore_engine is not None:
@@ -687,6 +804,14 @@ class Analyzer:
 
             result = self.prescore_engine.run(processed.original, processed.tissue_mask)
             public = result.public()
+            learning = getattr(self, "learning", None)
+            if learning is not None and result.tile_embeddings is not None and case_id:
+                from app.prescore import TILE
+
+                learning.record(case_id, result.tile_embeddings, kind="field", grid=tuple(result.grid), tile_px=TILE,
+                                size=(int(processed.original.shape[1]), int(processed.original.shape[0])),
+                                rgb=processed.original,
+                                summary={"prescore": public["category"], "patch_id": patch_id[:200]})
             show = bool(policy.get("show_scores")) or bool(policy.get("research_mode"))
             block = {"available": True, "site": policy.get("site"), "gate_status": policy.get("status"),
                      "shown": show, "validated": bool(policy.get("show_scores")),
@@ -695,7 +820,8 @@ class Analyzer:
                 from app.prescore import prediction_set
 
                 ckpt = getattr(self.prescore_engine, "checkpoint", None)
-                public["prediction_set"] = (prediction_set(public["probabilities"], Path(ckpt).parent, policy.get("site"))
+                public["prediction_set"] = (prediction_set(public["probabilities"], Path(ckpt).parent, policy.get("site"),
+                                                           head_version=self.prescore_engine.info.get("head_version", "v0"))
                                             if ckpt else {"available": False, "reason": "No conformal calibration for this model."})
                 block["prescore"] = public
                 if not policy.get("show_scores"):
@@ -711,14 +837,16 @@ class Analyzer:
 
         decision = decision_support(processed.normalized, processed.tissue_mask, cells["cells"], cells["summary"],
                                     self.cell_params, self.preprocessing.stain.thresholds(), shown, block)
-        guidance = recommend(shown, cells["summary"], policy, near_2plus=decision["near_2plus"])
+        if quality is not None:
+            decision["qc"] = quality_qc(quality) + decision["qc"]
+        guidance = recommend(shown, cells["summary"], policy, near_2plus=decision["near_2plus"], quality=quality)
         cell_evidence["decision_support"] = decision
         from app.explain import build_explanation
 
         cell_evidence["explanation"] = build_explanation(
             processed.normalized, cells, cells["summary"], shown, block, guidance, self.cell_params,
             self.preprocessing.stain.thresholds())
-        return block, cell_evidence, guidance
+        return block, cell_evidence, guidance, quality
 
     def _log_shadow(self, patch_id: str, public: dict) -> None:
         """Withheld pre-scores are logged so the site can later be validated against pathologists."""

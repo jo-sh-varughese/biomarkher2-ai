@@ -8,12 +8,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 FILES=(
-  artifacts/phase2_unet/best.pt                       # stain map (pixel intensity classes)
-  artifacts/phase2_unet/conformal_calibration.npz     # its pixel-level conformal calibration
-  artifacts/phase2_unet/conformal_calibration_ids.json
+  artifacts/phase2_unet_8epochs/best.pt              # stain map (pixel intensity classes), the adopted 8-epoch model
+  artifacts/phase2_unet_8epochs/conformal_calibration.npz     # its pixel-level conformal calibration
+  artifacts/phase2_unet_8epochs/conformal_calibration_ids.json
   artifacts/v2/run_b/best.pt                          # AI pre-score (multi-task U-Net, ResNet-50)
   artifacts/v2/run_b/prescore_sets.json               # its conformal prediction-set calibration (training site)
-  artifacts/tumour/best.pt                            # invasive-tumour segmenter (whole slides)
 )
 for f in "${FILES[@]}"; do
   [ -f "$f" ] || { echo "missing: $f" >&2; exit 1; }
