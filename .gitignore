@@ -7,7 +7,6 @@ __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
 configs/paths.yaml
-.claude/
 *.log
 *.aux
 *.egg-info/

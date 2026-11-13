@@ -6,7 +6,6 @@ artifacts/
 # Not needed inside the image.
 .git/
 .pytest_cache/
-.claude/
 tests/
 scripts/__pycache__/
 **/__pycache__/
