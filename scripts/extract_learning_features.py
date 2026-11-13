@@ -34,14 +34,14 @@ from training.v2_engine import load_model, prepare_batch  # noqa: E402
 
 
 @torch.no_grad()
-def embed(model, samples: list[Sample], prep, batch: int = 2) -> list[np.ndarray]:
+def embed(model, samples: list[Sample], prep, batch: int = 2, device: torch.device = torch.device("cpu"), workers: int = 0) -> list[np.ndarray]:
     loader = torch.utils.data.DataLoader(ImageDataset(samples, train=False), batch_size=batch, shuffle=False,
-                                         num_workers=0, collate_fn=collate)
+                                         num_workers=workers, collate_fn=collate)
     out = []
     for i, b in enumerate(loader):
-        pixels, bag_sizes, _ = prepare_batch(b, torch.device("cpu"), prep, aug=None, need_seg_labels=False)
+        pixels, bag_sizes, _ = prepare_batch(b, device, prep, aug=None, need_seg_labels=False)
         _, feats = model.unet(model.standardize(pixels), return_features=True, with_seg=False)
-        emb = model.embed(torch.cat([feats.mean((2, 3)), feats.amax((2, 3))], 1)).numpy().astype(np.float16)
+        emb = model.embed(torch.cat([feats.mean((2, 3)), feats.amax((2, 3))], 1)).float().cpu().numpy().astype(np.float16)
         out += np.split(emb, np.cumsum(bag_sizes)[:-1])
         if (i + 1) % 25 == 0:
             print(f"  {len(out)}/{len(samples)}", flush=True)
@@ -54,23 +54,30 @@ def main() -> None:
     ap.add_argument("--out", required=True)
     ap.add_argument("--per-class", type=int, default=100, help="replay and reference images per grade")
     ap.add_argument("--sets", default="replay,reference,bci", help="which sets to extract (comma-separated)")
+    ap.add_argument("--device", default="cpu", help="cpu or cuda (a rented GPU makes the full BCI set a few minutes' work)")
+    ap.add_argument("--batch", type=int, default=2)
+    ap.add_argument("--workers", type=int, default=0)
+    ap.add_argument("--bci-dirs", nargs=2, metavar=("TRAIN", "TEST"), default=None,
+                    help="folders of BCI IHC pngs (default: the local subset data/external/bci/IHC_train and IHC_test)")
     args = ap.parse_args()
     torch.set_num_threads(max(1, torch.get_num_threads()))
     prep = PreprocessingConfig.from_yaml(ROOT / "configs/preprocessing.yaml")
-    model = load_model(Path(args.checkpoint), torch.device("cpu")).float().eval()
+    device = torch.device(args.device)
+    model = load_model(Path(args.checkpoint), device).float().eval()
     split = ROOT / "configs/splits/her2_ihc_40x_split.json"
     sets = {
-        "replay": her2_ihc_40x_samples(ROOT / "data/raw", split, "fit", args.per_class, seed=1),
-        "reference": her2_ihc_40x_samples(ROOT / "data/raw", split, "holdout", args.per_class, seed=2),
+        "replay": her2_ihc_40x_samples(ROOT / "data/raw", split, "fit", args.per_class, seed=1, allow_missing=True),
+        "reference": her2_ihc_40x_samples(ROOT / "data/raw", split, "holdout", args.per_class, seed=2, allow_missing=True),
         "bci": [Sample(str(p), "bci", bci_score(p.name), bci_score(p.name), False, "quad2x")
-                for d in ("IHC_train", "IHC_test") for p in sorted((ROOT / "data/external/bci" / d).glob("*.png"))],
+                for d in (list(map(Path, args.bci_dirs)) if args.bci_dirs else [ROOT / "data/external/bci" / "IHC_train", ROOT / "data/external/bci" / "IHC_test"])
+                for p in sorted(d.glob("*.png"))],
     }
     wanted = set(args.sets.split(","))
     sets = {k: v for k, v in sets.items() if k in wanted}
     data = {}
     for name, samples in sets.items():
         print(f"{name}: {len(samples)} images", flush=True)
-        embs = embed(model, samples, prep)
+        embs = embed(model, samples, prep, args.batch, device, args.workers)
         data[f"{name}_emb"] = np.array(embs, dtype=object)
         data[f"{name}_label"] = np.array([s.label for s in samples])
         data[f"{name}_id"] = np.array([Path(s.path).name for s in samples])

@@ -1,0 +1,32 @@
+# Fine-tune Run B on HER2match (3DHistech P1000, Zenodo 10.5281/zenodo.15797050).
+#
+# Starts from artifacts/v2/run_b/best.pt (not from scratch) and trains on a mix of
+# HER2match's train-split tiles and a replay subset of our own patches, so the
+# training hospital is not forgotten. Epoch selection: mean QWK over our val split
+# and HER2match's val+test slides EXCEPT the four held-out slides (013, 015, 016,
+# 025), which are only ever evaluated (eval set her2match_heldout) -- and are the
+# slides the portal is tested on. BCI is not in this run (its download needs
+# Google Drive); BCI performance is therefore not re-checked here.
+base: v2_base.yaml
+run_name: ft_her2match
+data:
+  train_sites: [her2_ihc_40x, her2match]
+  her2_allow_missing: true
+  her2match_root: data/external/her2match/IHC
+  her2match_scores: data/external/her2match/HER2match_scores.csv
+  her2match_min_tumour: 0.08
+train:
+  init_from: artifacts/v2/run_b/best.pt
+  epochs: 6
+  bags_per_epoch: 3000
+  lr: 1.0e-4            # gentle: a fine-tune, not a retrain
+  encoder_lr_mult: 0.3
+  warmup_fraction: 0.05
+  val_limit_per_class: 150
+  max_minutes: 60
+  resume: true
+eval:
+  sets: [her2_ihc_40x_holdout, her2match_heldout]
+  site_norm: false
+  limit_per_class: 150        # our holdout: 150 per class (the pod receives that subset)
+  her2match_limit_per_class: 300

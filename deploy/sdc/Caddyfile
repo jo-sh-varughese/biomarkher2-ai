@@ -1,0 +1,31 @@
+# HTTPS front for BioMarkHER2 (deploy/sdc/docker-compose.yml).
+#
+# BIOMARK_HOSTNAME  the name (or IP) users type, e.g. her2.<sdc-domain> or 10.5.93.57
+# BIOMARK_TLS       "/certs/cert.pem /certs/key.pem" with the SDC-issued certificate (preferred),
+#                   or "internal" for Caddy's own self-signed certificate until SDC issues one
+#                   (browsers then warn). Neither contacts the internet.
+# Plain HTTP on port 80 is redirected to HTTPS automatically.
+{
+	admin off
+	# Browsers send no SNI when the portal is opened by IP address (https://10.5.93.57):
+	# without a default, Caddy cannot choose a certificate and aborts the handshake.
+	default_sni {$BIOMARK_HOSTNAME}
+}
+
+{$BIOMARK_HOSTNAME} {
+	tls {$BIOMARK_TLS}
+
+	# Slide uploads are up to 8 GB: no body size limit here; the app enforces its own.
+	reverse_proxy app:8000 {
+		# Uploads over VPN and whole-slide analysis requests can take many minutes.
+		transport http {
+			read_timeout 30m
+			write_timeout 30m
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

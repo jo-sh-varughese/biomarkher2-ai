@@ -12,3 +12,15 @@ configs/paths.yaml
 *.aux
 *.egg-info/
 dist/
+
+# demo tunnel binary and log (downloaded, not source)
+tools/cloudflared.exe
+tools/tunnel.log
+tools/ngrok.exe
+tools/ngrok_domain.txt
+tools/demo_run.txt
+
+# TMLR anonymous submission bundle; rebuild with paper/her2low/tmlr/make_supplement.py
+paper/her2low/tmlr/submission/
+*.fls
+*.fdb_latexmk

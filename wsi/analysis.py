@@ -46,11 +46,98 @@ ARTEFACT, CONTROL = -2, -3          # region codes for excluded tissue
 EXCLUDED_COLORS = {ARTEFACT: (90, 90, 90), CONTROL: (20, 150, 170)}
 INK_CAST = 15.0                     # wsi/artefacts.blue_cast above this -> ink / film artefact
 GRADE_RGB = {"0": (110, 130, 160), "1+": (217, 178, 48), "2+": (224, 130, 20), "3+": (200, 30, 40)}
+SELECT_MPP = 2.0                    # field selection reads the tissue at this resolution (see _choose_fields)
+SELECT_TILE_PX = 2048               # ... in tiles of at most about this many pixels a side (bounded memory)
+NUCLEUS_CONTRAST = 18.0             # grey levels darker than the local background that count as a nucleus
+EDGE_UM = 300.0                     # no fields this close to the tissue edge (edge artefact)
+DAB_OD = 0.03                       # rgb2hed DAB value counted as staining when choosing fields
 CONTROL_CROPS = 6                   # fields read inside the control to measure its DAB
 
 
 # Field-quality codes that drop a whole-slide field (the rest are judged at slide level).
 FIELD_DROP_CODES = {"too_dark", "noise", "graphics", "greyscale", "no_structure", "not_ihc", "marker", "nuclear_stain"}
+
+
+BORDERLINE_POINTS = 3.0  # a cumulative percentage within this many points of the 10% cut-off is borderline
+
+
+def focal_high_fields(fields: list[dict], rule_percent: float = 10.0) -> list[dict]:
+    """Fields whose own cells are 2+/3+ above the 10% rule with 95% confidence (Wilson lower bound).
+
+    Tumour is not segmented, so the slide-wide 10% is taken over all tissue in every field: a 2+ tumour area
+    surrounded by stroma and normal ducts is diluted to a few percent (HER2match 025, a 2+ slide: 1.4% of all
+    cells >=2+, yet 4 of 40 fields are 2+/3+ by themselves, each with only 22-49 cells). A confidence bound, not a
+    fixed cell count, decides whether a field's own share is real: a small field that is mostly 2+ counts, a
+    single stray 2+ cell does not. Such fields must reach the pathologist before a 0/1+ slide is reported as not
+    needing ISH. They do not change the grade: a 1+ slide can carry a 2+ field too.
+    """
+    from app.decision import wilson
+
+    out = []
+    for f in fields:
+        n = int(f.get("cells") or 0)
+        pct = f.get("cells_at_least_2plus_pct")
+        if f.get("cell_category") not in ("2+", "3+") or not n or pct is None:
+            continue
+        if wilson(round(n * pct / 100), n)[0] > rule_percent:
+            out.append(f)
+    return out
+
+
+def primary_score(cells: dict, ai: dict | None, regions: list, min_cells: int, *, too_coarse: bool = False,
+                  blocked: bool = False, focal: list[dict] | None = None) -> dict:
+    """The slide's pre-score: the cell-level ASCO/CAP call, with the AI score as a second opinion.
+
+    At a new site the attention-pooled AI score is the part that fails on faint 1+/2+ (HER2match: it called a
+    1+ slide 0 while the cell rule, inside marked tumour, called it 1+); the published systems that hold up across
+    sites all report per-cell membrane percentages (reports/HER2 low prescoring on new scanners.md). The call is
+    stated with the cumulative percentages it rests on and its distance from the 10% cut-off that decides it.
+    """
+    pct = cells.get("percent") or {}
+    n = int(cells.get("cells_measured") or 0)
+    cuts = {"1+": float(cells.get("percent_at_least_1plus") or 0.0), "2+": float(cells.get("percent_at_least_2plus") or 0.0),
+            "3+": float(pct.get("3+") or 0.0)}
+    category = cells.get("field_category") or cells.get("measured_category")
+    reasons = []
+    if blocked:
+        reasons.append("the slide could not be scored (wrong stain, no usable field or too few cells)")
+    if too_coarse:
+        reasons.append("scanned below ~20x: membranes cannot be judged")
+    if n < min_cells:
+        reasons.append(f"only {n} cells measured (needs {min_cells})")
+    available = not reasons and category is not None
+    # the boundary nearest to the evidence, e.g. "0.9% of cells >=2+ (needs >10% for 2+)"
+    nearest = min(cuts, key=lambda k: abs(cuts[k] - 10.0))
+    gap = round(cuts[nearest] - 10.0, 1)
+    ai_cat = (ai or {}).get("category")
+    review = []
+    if available and abs(gap) <= BORDERLINE_POINTS:
+        review.append(f"{cuts[nearest]:.1f}% of cells at {nearest} or above is within {BORDERLINE_POINTS:.0f} points of the 10% cut-off.")
+    if available and ai_cat is not None and ai_cat != category:
+        review.append(f"The AI second opinion ({ai_cat}) differs from the cell-level pre-score ({category}).")
+    focal = focal or []
+    if available and focal and category in ("0", "1+"):
+        review.append(f"{len(focal)} field(s) are 2+/3+ by the cell rule on their own: a 2+ tumour area may be diluted "
+                      f"by the surrounding tissue. Check these fields before reporting {category}.")
+    if not regions:
+        review.append("Fields were chosen automatically: mark the invasive tumour on the slide for a score restricted to it.")
+    return {
+        "available": available,
+        "category": category if available else None,
+        "source": "cell-level ASCO/CAP 10% rule",
+        "cells_measured": n,
+        "cumulative_percent": {"at_least_1plus": round(cuts["1+"], 1), "at_least_2plus": round(cuts["2+"], 1),
+                               "3plus": round(cuts["3+"], 1)},
+        "nearest_cut": {"grade": nearest, "percent": round(cuts[nearest], 1), "gap_points": gap,
+                        "text": f"{cuts[nearest]:.1f}% of cells {nearest} or above (needs >10% for {nearest})"},
+        "rule": cells.get("rule_applied"),
+        "restricted_to_regions": bool(regions),
+        "ai_second_opinion": ai_cat,
+        "agrees_with_ai": None if (ai_cat is None or not available) else ai_cat == category,
+        "review": review,
+        "focal_2plus_fields": [{"index": f["index"], "cell_category": f["cell_category"], "cells": f["cells"], "at_least_2plus_pct": f.get("cells_at_least_2plus_pct")} for f in focal],
+        "unavailable_reasons": reasons,
+    }
 
 
 @dataclass
@@ -103,7 +190,7 @@ class SlideAnalyzer:
 
         The check needs only colour, so blocks are read at a coarse resolution; every block is checked (no model).
         """
-        from wsi.artefacts import blue_cast
+        from wsi.artefacts import DAB_TISSUE_SHARE, INK_TEXTURE, blue_cast, block_texture, dab_share
 
         h, w = tissue.shape
         cls = np.full((h, w), -1, dtype=np.int8)
@@ -115,31 +202,150 @@ class SlideAnalyzer:
         if len(blocks) > self.settings.max_artefact_blocks:
             step = len(blocks) / self.settings.max_artefact_blocks
             blocks = [blocks[int(i * step)] for i in range(self.settings.max_artefact_blocks)]
+        casts, stained = [], []
         for i, (r, c) in enumerate(blocks):
             rgb = slide.read(int(c * factor), int(r * factor), int(block_l0), int(block_l0), target_mpp=BLOCK_READ_MPP)
-            if blue_cast(rgb, glass) > INK_CAST:
+            casts.append(blue_cast(rgb, glass))
+            # stained (DAB) or structured (nuclei, fibres) blocks are tissue, never a film
+            stained.append(dab_share(rgb) >= DAB_TISSUE_SHARE or block_texture(rgb) >= INK_TEXTURE)
+            if i % 25 == 0:
+                progress.update(f"Checking for ink and film {i + 1}/{len(blocks)}", 0.03 + 0.12 * (i + 1) / max(1, len(blocks)))
+        if not casts:
+            return cls
+        # On a scanner that clips glass to pure white, textured tissue can be as "blue" as a
+        # film; the structure test above (block_texture) is what keeps it, not this cut-off.
+        cut = INK_CAST
+        for (r, c), cast, dab in zip(blocks, casts, stained):
+            if cast > cut and not dab:
                 sub_h, sub_w = min(bo, h - r), min(bo, w - c)
                 region = tissue[r:r + sub_h, c:c + sub_w]
                 cls[r:r + sub_h, c:c + sub_w] = np.where(region, ARTEFACT, cls[r:r + sub_h, c:c + sub_w])
-            if i % 25 == 0:
-                progress.update(f"Checking for ink and film {i + 1}/{len(blocks)}", 0.03 + 0.12 * (i + 1) / max(1, len(blocks)))
         return cls
 
-    def _choose_fields(self, usable, factor, slide):
-        """Fields spread over the usable tissue (controls and artefacts already removed)."""
+    def _choose_fields(self, usable, factor, slide, overview=None, edge_from=None):
+        """Fields over the usable tissue (controls and artefacts already removed), aimed at tumour.
+
+        Tumour is not segmented, but ASCO/CAP scores invasive tumour cells only, and
+        spreading fields evenly over ALL tissue put most of them in fat and stroma on a
+        slide whose tumour is small -- the slide then read as 0. So every candidate field
+        is scored from a read of the tissue at SELECT_MPP (enough to see nuclei crowding
+        and membrane DAB, not single cells):
+
+        * cellularity -- the share of pixels with dense haematoxylin (crowded nuclei:
+          carcinoma and lymphocytes; fat and fibrous stroma score low);
+        * DAB -- the share of pixels with DAB (any membrane staining);
+
+        candidates within EDGE_UM of the tissue edge are left out (edge artefact: cut
+        margins stain darker and bluer), and the best-scoring fields are taken with a
+        minimum spacing so they still come from different parts of the tumour. On a
+        HER2 0 slide there is no DAB, so the fields simply go to the most cellular tissue.
+        Without ``overview`` (or without microns-per-pixel) fields are spread evenly.
+        """
         fo = max(1, int(round(FIELD_PX * FIELD_MPP / (slide.info.mpp or FIELD_MPP) / factor)))  # field size in overview px
         h, w = usable.shape
+        mpp = slide.info.mpp
+        if overview is not None and mpp:
+            um_per_ov = factor * mpp
+            edge = int(round(EDGE_UM / um_per_ov))
+            # the edge buffer is measured from the TISSUE edge (edge_from), not from the edge of a
+            # pathologist-marked region, which would otherwise lose a 300 um rim
+            base = usable if edge_from is None else edge_from
+            inner = (ndimage.binary_erosion(base, iterations=max(1, edge)) & usable) if edge else usable
+            if inner.sum() < 0.2 * usable.sum():  # thin tissue: an edge buffer would leave nothing
+                inner = usable
+        else:
+            inner = usable
         cands = []
         for r in range(0, h - fo + 1, fo):
             for c in range(0, w - fo + 1, fo):
                 t = float(usable[r:r + fo, c:c + fo].mean())
-                if t >= self.settings.min_tissue_fraction:
+                if t >= self.settings.min_tissue_fraction and inner[r:r + fo, c:c + fo].mean() >= 0.5:
                     cands.append((t, r, c))
-        if len(cands) > self.settings.max_fields:
-            cands.sort(key=lambda t: (t[1], t[2]))
-            step = len(cands) / self.settings.max_fields
-            cands = [cands[int(i * step)] for i in range(self.settings.max_fields)]
-        return cands, fo
+        if not cands:  # nothing clear of the edge: fall back to all tissue
+            cands = [(float(usable[r:r + fo, c:c + fo].mean()), r, c) for r in range(0, h - fo + 1, fo)
+                     for c in range(0, w - fo + 1, fo) if usable[r:r + fo, c:c + fo].mean() >= self.settings.min_tissue_fraction]
+        if overview is None or not mpp or len(cands) <= self.settings.max_fields:
+            if len(cands) > self.settings.max_fields:
+                cands.sort(key=lambda t: (t[1], t[2]))
+                step = len(cands) / self.settings.max_fields
+                cands = [cands[int(i * step)] for i in range(self.settings.max_fields)]
+            return cands, fo
+
+        scores = self._field_scores(slide, cands, fo, factor)
+        order = np.argsort(-scores)
+        spacing = 2 * fo  # chosen fields are at least two field widths apart where possible
+        chosen = []
+        for i in order:
+            _, r, c = cands[i]
+            if all(abs(r - cands[j][1]) >= spacing or abs(c - cands[j][2]) >= spacing for j in chosen):
+                chosen.append(i)
+            if len(chosen) == self.settings.max_fields:
+                break
+        for i in order:  # small tumour: fill up with the next best, closer together
+            if len(chosen) == self.settings.max_fields:
+                break
+            if i not in chosen:
+                chosen.append(i)
+        return [cands[i] for i in sorted(chosen, key=lambda i: (cands[i][1], cands[i][2]))], fo
+
+    @staticmethod
+    def _field_scores(slide, cands, fo, factor) -> np.ndarray:
+        """Tumour likelihood of each candidate field, from a read of the tissue at SELECT_MPP.
+
+        score = nuclei share + 2 x DAB share, where
+        * nuclei: pixels clearly darker than their local background (blobs of ~one nucleus):
+          crowded in carcinoma, sparse in stroma. A "haematoxylin channel" measure does not
+          work here: scanners with a blue cast make plain collagen read as haematoxylin.
+        * DAB: rgb2hed DAB above DAB_OD (any membrane staining).
+        Glass, fat and green / teal marking dye are left out; a field on dye goes last.
+        The tissue is read in bounded tiles so a large section stays within memory.
+        """
+        from scipy.ndimage import gaussian_filter
+        from skimage.color import rgb2hed
+
+        mpp = slide.info.mpp
+        rs = [r for _, r, _ in cands]
+        cs = [c for _, _, c in cands]
+        r0, c0 = min(rs), min(cs)
+        scale = factor * mpp / SELECT_MPP  # select-image px per overview px
+        nuc_sum = np.zeros(len(cands), dtype=np.float64)
+        dab_sum = np.zeros(len(cands), dtype=np.float64)
+        dye_sum = np.zeros(len(cands), dtype=np.float64)
+        # Read the tissue in tiles of about SELECT_TILE_PX x SELECT_TILE_PX select-image pixels (plus a one-field
+        # margin for the local background), never a band across the whole section: a wide K-DISC section read in
+        # full-width bands needed several GB per band and the server was killed on an 8 GB VM (2026-11-11).
+        tile_ov = max(fo, int(SELECT_TILE_PX / max(scale, 1e-6)))  # overview px per tile side
+        tiles = {}
+        for i, (_, r, c) in enumerate(cands):
+            tiles.setdefault(((r - r0) // tile_ov, (c - c0) // tile_ov), []).append((i, r, c))
+        pad = fo  # context so the local background is right at the tile edges
+        for members in tiles.values():
+            y0 = max(0, min(r for _, r, _ in members) - pad)
+            x0 = max(0, min(c for _, _, c in members) - pad)
+            y1 = max(r for _, r, _ in members) + fo + pad
+            x1 = max(c for _, _, c in members) + fo + pad
+            rgb = slide.read(int(x0 * factor), int(y0 * factor), int((x1 - x0) * factor), int((y1 - y0) * factor),
+                             target_mpp=SELECT_MPP)
+            f32 = rgb.astype(np.float32)
+            grey = f32.mean(-1)
+            bright = grey > 225
+            dye = (f32[..., 1] > f32[..., 0] + 40) & (f32[..., 1] >= f32[..., 2] - 10)
+            del f32
+            local = gaussian_filter(grey, sigma=max(2.0, 12.0 / SELECT_MPP))
+            nuclei = (local - grey > NUCLEUS_CONTRAST) & ~bright & ~dye
+            dab = (rgb2hed(rgb)[..., 2] > DAB_OD) & ~bright & ~dye
+            sy, sx = rgb.shape[0] / ((y1 - y0) * factor), rgb.shape[1] / ((x1 - x0) * factor)
+            for i, r, c in members:
+                a0, a1 = int((r - y0) * factor * sy), int((r - y0 + fo) * factor * sy)
+                q0, q1 = int((c - x0) * factor * sx), int((c - x0 + fo) * factor * sx)
+                if a1 <= a0 or q1 <= q0:
+                    continue
+                nuc_sum[i] = nuclei[a0:a1, q0:q1].mean()
+                dab_sum[i] = dab[a0:a1, q0:q1].mean()
+                dye_sum[i] = dye[a0:a1, q0:q1].mean()
+        out = nuc_sum + 2.0 * dab_sum
+        out[dye_sum > 0.02] -= 1.0  # a field on marking dye goes last
+        return out.astype(np.float32)
 
     @staticmethod
     def _exclude_non_patient(tissue, cls, um_per_px):
@@ -151,12 +357,19 @@ class SlideAnalyzer:
         from wsi.artefacts import find_control_cores, group_pieces
 
         artefact = cls == ARTEFACT
-        if artefact.any():  # a piece that is mostly artefact is artefact as a whole
+        if artefact.any():
+            # an ink blot or film has a soft, paler halo that misses the cut-off: grow the
+            # flagged area by one check block into the tissue around it
+            halo = max(1, int(round(BLOCK_UM / um_per_px)))
+            artefact = ndimage.binary_dilation(artefact, iterations=halo) & tissue
+            # a piece that is mostly artefact is artefact as a whole
             pieces = group_pieces(tissue, um_per_px)
             for i in np.unique(pieces[artefact]):
-                piece = pieces == i
-                evaluated = piece & (cls != -1)
-                if i and evaluated.any() and artefact[evaluated].mean() > 0.5:
+                # the inked share of the piece's whole tissue area. (Measured over the flagged
+                # pixels alone, as before, this was always 1: one inked block excluded the
+                # entire section it sat on -- a 3+ tumour, or all of a HER2 0 slide.)
+                piece = (pieces == i) & tissue
+                if i and piece.any() and artefact[piece].mean() > 0.5:
                     artefact |= piece
             cls[artefact] = ARTEFACT
         control, cores = find_control_cores(tissue & ~artefact, um_per_px)
@@ -257,7 +470,10 @@ class SlideAnalyzer:
         return rep, gain
 
     # -------------------------------------------------------------------- run
-    def run(self, slide: Slide, progress: Progress | None = None) -> dict:
+    def run(self, slide: Slide, progress: Progress | None = None, regions: list | None = None) -> dict:
+        """``regions``: pathologist-marked invasive tumour, as level-0 boxes {x, y, w, h}; fields are then
+        chosen only inside them (the way ASCO/CAP scoring is defined, and how the per-slide accuracy in
+        the KDISC report was measured: on pathologist-chosen tumour regions)."""
         from app.cells import analyze_cells, overlay_cells, public_cells, summarize
         from app.guidance import recommend
         from app.prescore import embed_field, pool_slide
@@ -279,7 +495,25 @@ class SlideAnalyzer:
         cls = self._artefact_map(slide, tissue, factor, progress, glass)
         usable, excluded = self._exclude_non_patient(tissue, cls, factor * (mpp or FIELD_MPP))
         control_report, gain = self._control_calibration(slide, cls, factor, progress)
-        fields, fo = self._choose_fields(usable, factor, slide)
+        roi_mask, roi_used = None, []
+        if regions:
+            roi_mask = np.zeros_like(usable)
+            for g in regions:
+                try:
+                    x, y, w, h = (float(g[k]) for k in ("x", "y", "w", "h"))
+                except (KeyError, TypeError, ValueError):
+                    continue
+                c0, r0 = max(0, int(x / factor)), max(0, int(y / factor))
+                c1, r1 = min(usable.shape[1], int(np.ceil((x + w) / factor))), min(usable.shape[0], int(np.ceil((y + h) / factor)))
+                if c1 > c0 and r1 > r0:
+                    roi_mask[r0:r1, c0:c1] = True
+                    roi_used.append({"x": int(x), "y": int(y), "w": int(w), "h": int(h)})
+            if roi_mask.any():
+                fields, fo = self._choose_fields(usable & roi_mask, factor, slide, overview, edge_from=usable)
+            else:
+                roi_mask = None
+        if roi_mask is None:
+            fields, fo = self._choose_fields(usable, factor, slide, overview)
         flags = list(excluded["flags"])
         if mpp is None:
             flags.append("Scanner microns-per-pixel unknown: magnification cannot be confirmed.")
@@ -287,8 +521,14 @@ class SlideAnalyzer:
         if too_coarse:
             flags.append(f"Scanned at {mpp:.2f} um/px (below ~20x): membrane completeness cannot be judged reliably; "
                          "the AI pre-score is withheld and cell evidence is indicative only.")
-        flags.append("Tumour is not segmented: fields are spread over all usable tissue, so stroma, in-situ carcinoma and "
-                     "normal ducts are included. ASCO/CAP scores invasive tumour only: check that each field lies in it.")
+        if roi_mask is not None:
+            roi_mm2 = float((usable & roi_mask).sum()) * (factor * (mpp or 0.25) / 1000) ** 2
+            flags.append(f"Scored inside {len(roi_used)} pathologist-marked tumour region(s) ({roi_mm2:.1f} mm2 of tissue); "
+                         "nothing outside them was used.")
+        else:
+            flags.append("Tumour is not segmented: fields are aimed at the most cellular tissue, but stroma, in-situ carcinoma "
+                         "and normal ducts can still be included. ASCO/CAP scores invasive tumour only: mark the tumour "
+                         "regions on the slide for a score restricted to them.")
         if control_report["cores_found"]:
             if control_report["applied"]:
                 flags.append(f"On-slide control used for stain calibration: {control_report['reason']}")
@@ -333,7 +573,8 @@ class SlideAnalyzer:
             records += cell["cells"]
             entry = {"index": i, "x": x0, "y": y0, "size": size_l0, "overview_box": [int(r), int(c), int(fo)],
                      "tissue_fraction": round(float(score), 3), "cells": cell["summary"]["cells_measured"],
-                     "cell_category": cell["summary"]["field_category"]}
+                     "cell_category": cell["summary"]["field_category"],
+                     "cells_at_least_2plus_pct": cell["summary"].get("percent_at_least_2plus")}
             if engine is not None and not too_coarse:
                 emb, tile_probs = embed_field(engine, rgb)
                 embeddings.append(emb)
@@ -356,6 +597,12 @@ class SlideAnalyzer:
             slide_block = "The brown stain fills whole nuclei: this looks like a nuclear marker (ER, PR or Ki-67), not HER2."
         elif not field_results:
             slide_block = "No usable field could be measured on this slide (see the rejected fields)."
+        elif len(records) < a.cell_params.min_cells:
+            # A grade (and an ISH suggestion) from a handful of cells in the few fields that passed is noise:
+            # K-DISC slide 3 read "AI 1+, cells 2+, ISH recommended" from 57 cells in 3 of 40 fields.
+            why = f" {len(rejected_fields)} of {n_sel} fields were rejected ({', '.join(sorted(set(c.replace('_', ' ') for c in codes)))})." if codes else ""
+            slide_block = (f"Insufficient sample: only {len(records)} cells could be measured (needs {a.cell_params.min_cells})."
+                           f"{why} Re-scan the slide or mark the invasive tumour, then analyse again.")
         if rejected_fields:
             flags.append(f"{len(rejected_fields)} of {n_sel} fields were rejected by the field-quality check "
                          f"({', '.join(sorted(set(c.replace('_', ' ') for c in codes)))}).")
@@ -401,7 +648,7 @@ class SlideAnalyzer:
                     if not policy.get("show_scores"):
                         block["warning"] = "RESEARCH MODE: this site is not locally validated; this pre-score must not inform patient care."
                 else:
-                    block["withheld_reasons"] = list(policy.get("reasons") or [])
+                    block["withheld_reasons"] = [slide_block] if slide_block else list(policy.get("reasons") or [])
             else:
                 block["shown"] = False
                 block["withheld_reasons"] = flags[:1] or ["No analysable fields."]
@@ -420,10 +667,20 @@ class SlideAnalyzer:
                                           "level": "block", "text": slide_block}]}
             cells_summary["measured_category"] = cells_summary.get("field_category")
             cells_summary["field_category"] = None
+        focal = [] if (too_coarse or slide_block) else focal_high_fields(field_results, a.cell_params.rule_percent)
+        primary = primary_score(cells_summary, shown_prescore, roi_used, a.cell_params.min_cells,
+                                too_coarse=too_coarse, blocked=bool(slide_block), focal=focal)
+        if focal and primary["category"] in ("0", "1+"):
+            decision["evidence_for_ish"].append({
+                "text": f"{len(focal)} field(s) are 2+/3+ by the cell rule on their own (slide-wide {primary['category']} "
+                        "is diluted by non-tumour tissue): a 2+ tumour area is possible.", "weight": "strong"})
+            # "well away from the 2+ boundary" is not true of a slide with 2+ fields
+            decision["evidence_against_ish"] = [e for e in decision["evidence_against_ish"] if "well away" not in e["text"]]
         guidance = recommend(shown_prescore, cells_summary, policy, extra_flags=flags,
                              assessable=not too_coarse, near_2plus=decision["near_2plus"],
                              # a wrong stain outranks magnification; otherwise "rescan at 20x" governs
-                             quality=slide_quality if (slide_quality and (not too_coarse or wrong_stain)) else None)
+                             quality=slide_quality if (slide_quality and (not too_coarse or wrong_stain)) else None,
+                             cells_primary=primary["available"], focal_2plus=len(focal))
         cells_summary["decision_support"] = decision
         cells_summary["explanation"] = build_explanation(None, {"cells": records}, cells_summary, shown_prescore, block,
                                                          guidance, a.cell_params, thresholds)
@@ -444,20 +701,26 @@ class SlideAnalyzer:
             grade_rgba[r:r + s, c:c + max(1, s // 10), 3] = 255
             grade_rgba[r:r + s, c + s - max(1, s // 10):c + s, 3] = 255
         ranked = sorted(field_results, key=lambda f: -(f.get("attention") or f["tissue_fraction"]))[: self.settings.hotspots]
+        # the 2+/3+ cell fields are what the pathologist must see first; attention alone can rank them out
+        focal_ids = {f["index"] for f in focal}
+        ranked = ([f for f in field_results if f["index"] in focal_ids]
+                  + [f for f in ranked if f["index"] not in focal_ids])[: max(self.settings.hotspots, len(focal_ids))]
         hotspots = [{"index": f["index"], "x": f["x"], "y": f["y"], "size": f["size"],
                      "prescore_category": f.get("prescore_category"), "cell_category": f["cell_category"],
                      "attention": f.get("attention"), "cells": f["cells"],
                      "image": _uri(f["_rgb"], 420), "cells_image": _uri(overlay_cells(f["_rgb"], f["_cells"]), 420)} for f in ranked]
         # ISH targets on a slide: the highest-grade hotspot fields
         decision["ish_targets"] = [
-            {"row": h["index"] + 1, "col": 0, "grade": h.get("prescore_category") or h["cell_category"],
+            {"row": h["index"] + 1, "col": 0,
+             "grade": h["cell_category"] if h["index"] in focal_ids else (h.get("prescore_category") or h["cell_category"]),
              "weight": round(100 * (h.get("attention") or 0)), "image": h["image"], "field": h["index"] + 1}
-            for h in hotspots if (h.get("prescore_category") or h["cell_category"]) in ("2+", "3+")][:3]
+            for h in hotspots if h["index"] in focal_ids or (h.get("prescore_category") or h["cell_category"]) in ("2+", "3+")][:3]
         fields_public = [{k: v for k, v in f.items() if not k.startswith("_")} for f in field_results]
         tissue_area_mm2 = float(usable.sum()) * (factor * (mpp or 0.25) / 1000) ** 2
         return {
             "slide": slide.info.to_dict() | {"overview_um_per_px": round(factor * (mpp or 0), 3)},
             "case_id": slide_case_id,
+            "primary_score": primary,
             "ai_prescore": block,
             "cell_evidence": cells_summary | {"cells": public_cells(records)[:3000]},
             "guidance": guidance,
@@ -466,7 +729,7 @@ class SlideAnalyzer:
             "quality": slide_quality or {"assessable": True, "status": "ok", "reasons": [], "summary": None},
             "hotspots": hotspots,
             "tissue": {"usable_area_mm2": round(tissue_area_mm2, 2), "fields_selected": len(field_results),
-                       "tumour_segmented": False},
+                       "tumour_segmented": False, "regions": roi_used},
             "stain_control": control_report,
             "flags": flags,
             "excluded": {k: v for k, v in excluded.items() if k != "flags"},

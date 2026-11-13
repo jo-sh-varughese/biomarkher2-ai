@@ -72,6 +72,12 @@ class CellParams:
     membrane_faint: float | None = None
     membrane_strong: float | None = None
     min_cells: int = 100                # fewer cells: percentages too unstable to lean on
+    # Not membrane staining: a cell whose "membrane" DAB is matched inside the cell (tan vessels, red cells,
+    # smooth muscle, background) is counted 0 -- ASCO/CAP counts membrane staining only. None = off.
+    diffuse_ratio: float | None = None  # cytoplasm OD >= ratio x membrane OD (below the strong cut) -> 0
+    # Stroma blobs: blue-tinted collagen read as one huge "nucleus". Nuclei larger than this (training-scale
+    # px; ~350 um^2 at 6000) are not cells. None = off (only max_nucleus_area applies).
+    nucleus_area_cap: int | None = None
 
     def scaled(self, factor: float) -> "CellParams":
         """Parameters for an image whose pixels are ``factor`` times smaller in microns."""
@@ -82,7 +88,8 @@ class CellParams:
                        max_nucleus_area=int(self.max_nucleus_area * factor ** 2),
                        split_min_distance=max(2, int(self.split_min_distance * factor)),
                        cell_expand=max(3, int(self.cell_expand * factor)),
-                       membrane_width=max(1, int(round(self.membrane_width * factor))))
+                       membrane_width=max(1, int(round(self.membrane_width * factor))),
+                       nucleus_area_cap=None if self.nucleus_area_cap is None else int(self.nucleus_area_cap * factor ** 2))
 
 
 def detect_nuclei(h: np.ndarray, tissue: np.ndarray, p: CellParams, d: np.ndarray | None = None) -> np.ndarray:
@@ -116,7 +123,8 @@ def detect_nuclei(h: np.ndarray, tissue: np.ndarray, p: CellParams, d: np.ndarra
     markers[tuple(peaks.T)] = np.arange(1, len(peaks) + 1)
     nuclei = watershed(-distance, markers, mask=mask)
     sizes = np.bincount(nuclei.ravel())
-    bad = (sizes < p.min_nucleus_area) | (sizes > p.max_nucleus_area)
+    cap = p.max_nucleus_area if p.nucleus_area_cap is None else min(p.max_nucleus_area, p.nucleus_area_cap)
+    bad = (sizes < p.min_nucleus_area) | (sizes > cap)
     bad[0] = False
     nuclei[bad[nuclei]] = 0
     return nuclei
@@ -251,6 +259,10 @@ def classify_cell(r: dict, p: CellParams, thresholds: tuple[float, float, float]
     stained = valid[valid >= faint]
     intensity = float(np.median(stained)) if stained.size else (float(np.median(valid)) if valid.size else 0.0)
     level = "strong" if intensity >= strong_cut else "moderate" if intensity >= moderate_cut else "weak" if intensity >= faint else "none"
+    diffuse = (p.diffuse_ratio is not None and level in ("weak", "moderate")
+               and float(r.get("cytoplasm_od", 0.0)) >= p.diffuse_ratio * intensity)
+    if diffuse:
+        level = "none"  # stain inside the cell as much as on its border: not membrane staining
     if completeness >= p.complete_fraction and level == "strong":
         cat, atypical = "3+", False
     elif completeness >= p.complete_fraction and level in ("weak", "moderate"):
@@ -262,7 +274,7 @@ def classify_cell(r: dict, p: CellParams, thresholds: tuple[float, float, float]
     else:
         cat, atypical = "0", False
     r.update({"completeness": round(completeness, 3), "membrane_od": round(intensity, 3), "level": level,
-              "category": cat, "atypical": atypical})
+              "category": cat, "atypical": atypical, "diffuse": bool(diffuse)})
     return r
 
 

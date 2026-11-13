@@ -159,6 +159,7 @@ class State:
         self.samples = self._collect_samples()
         self.slides = None  # wsi.server_routes.SlideState when --slide-root is given
         self.learning = None  # app.learning.service.LearningService when learning is on
+        self.cases = None  # app.case_store.CaseStore: every analysis and sign-off, per case
 
     def _collect_samples(self, per_class: int = 6) -> list[dict]:
         """A stable, reproducible handful of example patches per folder class.
@@ -207,6 +208,22 @@ class State:
             self.review_log.parent.mkdir(parents=True, exist_ok=True)
             with self.review_log.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        if self.cases is not None:
+            self.cases.record_review(entry)
+
+    def read_review_entries(self) -> list[dict]:
+        """Raw review-log entries, oldest first (malformed lines skipped)."""
+        if not self.review_log.is_file():
+            return []
+        with self.lock:
+            lines = self.review_log.read_text(encoding="utf-8").splitlines()
+        out = []
+        for line in lines:
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return out
 
     def read_reviews(self) -> list[dict]:
         """The review log, newest first, in the shape the portal renders.
@@ -308,6 +325,8 @@ class Route:
     # Reachable by someone who signed in with a temporary password they have
     # not replaced yet -- only what they need to replace it or leave.
     while_password_expired: bool = False
+    # The handler reads the request body itself (a slide upload is far too big to parse as JSON).
+    raw_body: bool = False
 
 
 def _route(method: str, path: str, handler: str, permission: str | None, **kwargs) -> Route:
@@ -343,6 +362,8 @@ ROUTES = (
     _route("POST", "/api/report", "_route_report", "report"),
     _route("POST", "/api/review", "_route_review", "review"),
     _route("POST", "/api/annotations", "_route_annotation", "annotate"),
+    _route("GET", "/api/cases", "_route_cases", "view"),
+    _route("GET", r"/api/cases/(?P<case_id>case_[0-9a-f]{16})", "_route_case", "view"),
     # -- the admin console
     _route("GET", "/api/admin/overview", "_admin_overview", "admin"),
     _route("GET", "/api/admin/users", "_admin_users", "admin"),
@@ -545,7 +566,7 @@ class Handler(SlideRoutesMixin, BaseHTTPRequestHandler):
                     )
                 if route.permission != "signed_in" and route.permission not in PERMISSIONS[call.user["role"]]:
                     raise AuthError("forbidden", "Your role doesn't allow this.", 403)
-            if method in ("POST", "PATCH", "DELETE"):
+            if method in ("POST", "PATCH", "DELETE") and not route.raw_body:
                 call.body = self._read_json()
             result = getattr(self, route.handler)(call)
             if result is not None:
@@ -716,10 +737,38 @@ class Handler(SlideRoutesMixin, BaseHTTPRequestHandler):
         return self._context()
 
     def _route_reviews(self, call: Call) -> dict:
-        return {"reviews": self.state.read_reviews()}
+        # A pathologist's case log holds their own sign-offs; an administrator sees everyone's.
+        reviews = self.state.read_reviews()
+        if call.user["role"] != "admin":
+            reviews = [r for r in reviews if r.get("reviewer_id") == call.user["id"]]
+        return {"reviews": reviews, "scope": "all" if call.user["role"] == "admin" else "own"}
 
     def _route_analyze(self, call: Call) -> dict:
-        return self._analyze(call.body)
+        return self._analyze(call.body, user=call.user)
+
+    def _case_store(self):
+        store = getattr(self.state, "cases", None)
+        if store is None:
+            raise FileNotFoundError("The case database is not enabled on this server.")
+        return store
+
+    def _route_cases(self, call: Call) -> dict:
+        return self._case_store().list_cases(call.user, person=call.query.get("person") or None)
+
+    def _route_case(self, call: Call) -> dict:
+        """One case: every analysis (AI pre-score, cell evidence, stain percentages, ISH guidance),
+        the full pathologist sign-offs from the review log, and the marked regions.
+        Non-administrators get only their own analyses, sign-offs and regions."""
+        case_id = call.params["case_id"]
+        detail = self._case_store().case_detail(call.user, case_id)
+        own = detail["scope"] == "own"
+        wanted = {r["review_id"] for r in detail["review_index"]}
+        reviews = [r for r in self.state.read_reviews() if r.get("id") in wanted or
+                   (r.get("case_id") == case_id and (not own or r.get("reviewer_id") == call.user["id"]))]
+        notes = [a for a in self._all_annotations() if a.get("case_id") == case_id
+                 and (not own or a.get("reviewer_id") == call.user["id"])]
+        detail.pop("review_index", None)
+        return {**detail, "reviews": reviews, "annotations": notes}
 
     def _route_report(self, call: Call) -> None:
         self._report(call.body)
@@ -752,7 +801,7 @@ class Handler(SlideRoutesMixin, BaseHTTPRequestHandler):
             },
         }
 
-    def _analyze(self, payload: dict) -> dict:
+    def _analyze(self, payload: dict, user: dict | None = None) -> dict:
         notes: list[str] = []
         if payload.get("patch_id"):
             patch_id = str(payload["patch_id"])
@@ -766,8 +815,11 @@ class Handler(SlideRoutesMixin, BaseHTTPRequestHandler):
 
             rgb, notes = decode_upload(raw)
             patch_id = str(payload.get("name") or "uploaded image")[:200]
+        elif "image" in payload:
+            raise ValueError("The uploaded image arrived empty. Field analysis takes one field image (PNG/JPEG/TIFF, "
+                             f"up to {MAX_UPLOAD_BYTES // (1024 * 1024)} MB); open whole-slide files on the Whole slides page.")
         else:
-            raise ValueError("Send either patch_id or image")
+            raise ValueError("Choose a sample field or upload a field image first.")
         specimen = str(payload.get("specimen") or "breast")[:40]
         # One analysis at a time per CPU budget: a second request waits its turn
         # instead of two inferences thrashing the same cores.
@@ -777,6 +829,13 @@ class Handler(SlideRoutesMixin, BaseHTTPRequestHandler):
             result.setdefault("quality", {}).setdefault("notes", []).extend(notes)
         result["dataset_label"] = self.state.dataset_label(patch_id) if payload.get("patch_id") else None
         result["annotations"] = self.state.read_annotations(patch_id)
+        cases = getattr(self.state, "cases", None)
+        if user is not None and cases is not None:
+            from app.case_store import thumbnail_from_rgb
+
+            name = str(payload.get("name") or Path(patch_id).name or patch_id)
+            result["analysis_record"] = cases.record_analysis("field", result, user, source=patch_id, name=name,
+                                                              thumbnail=thumbnail_from_rgb(rgb))
         return result
 
     def _report(self, payload: dict) -> None:
@@ -1118,6 +1177,9 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--preprocessing", default="configs/preprocessing.yaml")
     parser.add_argument("--patch-root", default="data/raw")
     parser.add_argument("--reviews", default="artifacts/reviews.jsonl")
+    parser.add_argument("--cases-db", default=None,
+                        help="SQLite case database (every analysis and sign-off, per case); "
+                             "default: cases.sqlite3 next to --reviews.")
     parser.add_argument("--annotations", default="artifacts/annotations.jsonl",
                         help="JSONL log of pathologist-marked field regions.")
     parser.add_argument(
@@ -1144,6 +1206,9 @@ def build_argparser() -> argparse.ArgumentParser:
         "--prescore-run", default="artifacts/v2/run_b/best.pt",
         help="Multi-task checkpoint for the AI pre-score and its explanations (skipped if missing).",
     )
+    parser.add_argument("--stain-profile", default=None,
+                        help="FILE:KEY -- re-colour this site's images into the training site's stain space before "
+                             "the AI pre-score (e.g. configs/site_profiles/her2_ihc_40x_vs_bci_her2match.json:her2match).")
     parser.add_argument("--site-name", default="HER2-IHC-40x (training site, UMMC)",
                         help="Which hospital's slides this server analyses.")
     parser.add_argument("--site-mpp", type=float, default=None,
@@ -1198,6 +1263,18 @@ def build_learning(args, analyzer, policy):
     return service
 
 
+def build_case_store(args, state):
+    """The case database (app/case_store.py), next to the review log unless --cases-db says otherwise.
+    Sign-offs already in the review log are indexed into it on start-up."""
+    from app.case_store import CaseStore
+
+    path = getattr(args, "cases_db", None) or str(Path(args.reviews).parent / "cases.sqlite3")
+    store = CaseStore(path)
+    added = store.backfill_reviews(state.read_review_entries())
+    print(f"Case database: {path}" + (f" ({added} earlier sign-offs indexed)" if added else ""))
+    return store
+
+
 def build_slide_state(args, analyzer):
     """Whole-slide support: the slide folder, the control reference and analysis limits."""
     from wsi.analysis import SlideSettings
@@ -1225,6 +1302,17 @@ def build_slide_state(args, analyzer):
           f"{'used for stain calibration (' + analyzer.control_level + ')' if analyzer.control_reference else 'measured only'})")
     return SlideState(root, analyzer, settings, getattr(args, "slide_mpp", None))
 
+
+
+def load_stain_profile(spec: str | None):
+    """``FILE:KEY`` -> (site profile, training-site profile) for app.prescore.PrescoreEngine, or None."""
+    if not spec:
+        return None
+    path, _, key = spec.rpartition(":")
+    if not path or not key:
+        raise SystemExit("--stain-profile must be FILE:KEY")
+    profiles = json.loads(Path(path).read_text(encoding="utf-8"))
+    return profiles[key], profiles["source"]
 
 
 def build_site_policy(args) -> dict:
@@ -1274,7 +1362,10 @@ def serve(args, *, open_browser: bool = False) -> int:
     print(f"Loading model from {args.run} ...")
     policy = build_site_policy(args)
     analyzer = Analyzer(args.run, args.config, args.preprocessing, args.conformal_alpha,
-                        prescore_checkpoint=args.prescore_run, site_policy=policy, shadow_log=args.shadow_log)
+                        prescore_checkpoint=args.prescore_run, prescore_site_norm=load_stain_profile(args.stain_profile),
+                        site_policy=policy, shadow_log=args.shadow_log)
+    if args.stain_profile:
+        print(f"Stain normalisation for the AI pre-score: {args.stain_profile}")
     print(f"Site: {policy['site']} -- gate: {policy['status'].upper()}"
           + (" (pre-scores shown)" if policy["show_scores"] else " (RESEARCH MODE: unvalidated pre-scores shown)" if policy["research_mode"] else " (pre-scores withheld)"))
     for reason in policy["reasons"]:
@@ -1285,7 +1376,9 @@ def serve(args, *, open_browser: bool = False) -> int:
         auth=auth, secure_cookies=args.secure_cookies, trust_proxy=args.trust_proxy,
     )
     Handler.state.host, Handler.state.port = args.host, args.port
+    Handler.state.cases = build_case_store(args, Handler.state)
     Handler.state.slides = build_slide_state(args, analyzer)
+    Handler.state.slides.case_store = Handler.state.cases
     Handler.state.learning = build_learning(args, analyzer, policy)
     print(f"Checkpoint epoch {analyzer.checkpoint_epoch}; "
           f"{len(Handler.state.samples)} sample patches indexed.")

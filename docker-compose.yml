@@ -11,6 +11,9 @@ services:
     volumes:
       # Read-only: the viewer only ever reads sample patches from here.
       - ./data:/app/data:ro
+      # Read-write: the Whole slides page saves uploaded slides here.
+      # Linux: `sudo chown -R 10001 data/slides` (the container runs as uid 10001).
+      - ./data/slides:/app/data/slides
       # Read-write: checkpoints are read, artifacts/reviews.jsonl is
       # appended to every time a pathologist records a review, and the
       # account database (artifacts/biomark.db) lives here too -- so accounts

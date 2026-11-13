@@ -1,0 +1,77 @@
+# BioMarkHER2 at the State Data Centre (SDC), VM KDISC_KASP_DB.
+#
+# Two containers:
+#   app    the portal and its API (the image built from the repo's Dockerfile)
+#   proxy  Caddy, terminating HTTPS on 443 and redirecting 80 -> 443
+#
+# Users reach the portal only through the proxy. The app's own port is bound
+# to 127.0.0.1 so it can be health-checked from the VM and never from the
+# network. Settings live in .env next to this file (copy .env.example).
+#
+# Install and operate: HANDOVER docs, "Deployment Guide", or deploy/sdc/README.md.
+name: biomarkher2
+
+services:
+  app:
+    image: biomarkher2:${BIOMARK_IMAGE_TAG:-sdc-2026.11.11}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Models (read) + accounts, audit log, reviews, case database, learning
+      # store (written). Owned by uid 10001. Back this directory up daily.
+      - ./artifacts:/app/artifacts
+      # Whole-slide files: uploaded through the portal or copied in over SFTP.
+      - ./slides:/app/data/slides
+    environment:
+      BIOMARK_DB: artifacts/biomark.db
+      # Served behind the HTTPS proxy: Secure cookie + HSTS, and the audit log
+      # records the client's address from X-Forwarded-For.
+      BIOMARK_SECURE_COOKIES: "1"
+      BIOMARK_TRUST_PROXY: "1"
+      # At most this many analyses run at once; the rest queue (4 vCPU VM).
+      BIOMARK_ANALYSIS_SLOTS: "${BIOMARK_ANALYSIS_SLOTS:-1}"
+    command:
+      - --run
+      - artifacts/phase2_unet_8epochs
+      - --prescore-run
+      - artifacts/v2/run_b/best.pt
+      - --patch-root
+      - data/raw
+      - --slide-root
+      - data/slides
+      # The hospital whose slides this server analyses. Not the training site,
+      # so the AI pre-score starts WITHHELD (shadow mode) until a local
+      # validation record exists (Deployment Guide, "Site validation").
+      - --site-name
+      - "${BIOMARK_SITE_NAME}"
+      - --site-mpp
+      - "${BIOMARK_SITE_MPP}"
+      - --site-validation
+      - "${BIOMARK_SITE_VALIDATION:-}"
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "5"}
+
+  proxy:
+    image: caddy:${CADDY_IMAGE_TAG:-2-alpine}
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      BIOMARK_HOSTNAME: "${BIOMARK_HOSTNAME}"
+      BIOMARK_TLS: "${BIOMARK_TLS:-internal}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "5"}
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -31,7 +31,7 @@ import torch  # noqa: E402
 
 from evaluation.score_metrics import meets_targets, paired_bootstrap, score_metrics  # noqa: E402
 from preprocessing.config import PreprocessingConfig  # noqa: E402
-from training.v2_data import bci_samples, her2_ihc_40x_samples  # noqa: E402
+from training.v2_data import bci_samples, her2_ihc_40x_samples, her2match_samples  # noqa: E402
 
 
 def _site_norm(cfg: dict) -> dict:
@@ -41,7 +41,10 @@ def _site_norm(cfg: dict) -> dict:
     source, bci = profiles["source"], profiles["bci_crop2x"]
     if cfg["data"].get("train_site_norm") or "her2_ihc_40x" in cfg["data"]["train_sites"]:
         # Shared stain space (or trained on our site): our reference space is the model's space.
-        return {"bci": (bci, source)}
+        out = {"bci": (bci, source)}
+        if "her2match" in profiles:
+            out["her2match"] = (profiles["her2match"], source)
+        return out
     return {"her2_ihc_40x": (source, bci)}
 
 
@@ -66,9 +69,15 @@ def evaluate_run(cfg: dict, out_dir: Path, checkpoint: Path | None = None, log=p
     wanted = ecfg.get("sets", ["her2_ihc_40x_holdout", "bci_test"])
     sets = {}
     if "her2_ihc_40x_holdout" in wanted:
-        sets["her2_ihc_40x_holdout"] = her2_ihc_40x_samples(rp("her2_root"), rp("her2_split"), "holdout", limit, cfg.get("seed", 0))
+        sets["her2_ihc_40x_holdout"] = her2_ihc_40x_samples(rp("her2_root"), rp("her2_split"), "holdout", limit, cfg.get("seed", 0),
+                                                            bool(cfg["data"].get("her2_allow_missing", False)))
     if "bci_test" in wanted:
         sets["bci_test"] = bci_samples(rp("bci_root"), "test", limit_per_class=limit)
+    if "her2match_heldout" in wanted:
+        # the four slides the portal is tested on (013, 015, 016, 025): never trained on, never used for selection
+        sets["her2match_heldout"] = her2match_samples(
+            rp("her2match_root"), rp("her2match_scores"), "heldout", float(cfg["data"].get("her2match_min_tumour", 0.08)),
+            ecfg.get("her2match_limit_per_class", 300), cfg.get("seed", 0), rp("her2match_root").parent / "tumour_scores.json")
     subset_file = cfg["data"].get("bci_subset_list")
     subset = set()
     if subset_file and (ROOT / subset_file).is_file():
@@ -107,6 +116,23 @@ def evaluate_run(cfg: dict, out_dir: Path, checkpoint: Path | None = None, log=p
                                  "probs": " ".join(map(str, r["probs"]))})
             log(f"{name} [{role}] {cond}: acc {m['accuracy']:.4f} bal {m['balanced_accuracy']:.4f} "
                 f"QWK {m['qwk']:.4f} (n={m['n']})" + (f" | target met: {c.get('meets_target')}" if t else ""))
+            if site == "her2match":
+                # slide-level call per held-out slide: the score with the highest mean tile probability
+                import re as _re
+                import numpy as _np
+
+                by_slide = {}
+                for r in rows:
+                    sl = int(_re.search(r"wsi(\d+)_", Path(r["path"]).name).group(1))
+                    by_slide.setdefault(sl, []).append(r)
+                calls = {}
+                for sl, rs in sorted(by_slide.items()):
+                    mean = _np.mean([r["probs"] for r in rs], axis=0)
+                    calls[f"wsi{sl:03d}"] = {"true": rs[0]["label"], "call": int(mean.argmax()),
+                                             "mean_probs": [round(float(x), 3) for x in mean], "tiles": len(rs)}
+                c["slide_calls"] = calls
+                log(f"  {name} {cond} slide calls: " + ", ".join(
+                    f"{k} true {['0','1+','2+','3+'][v['true']]} -> {['0','1+','2+','3+'][v['call']]}" for k, v in calls.items()))
         if "site_normalized" in preds:
             y = [r["label"] for r in preds["raw"]]
             entry["site_norm_vs_raw"] = paired_bootstrap(y, [r["pred"] for r in preds["raw"]], [r["pred"] for r in preds["site_normalized"]])

@@ -39,9 +39,13 @@ const TITLE_KEYS = {
 
 /* The page name for the breadcrumb: /admin/users/usr_... is still Users. */
 function titleKey(pathname) {
-  if (TITLE_KEYS[pathname]) return TITLE_KEYS[pathname];
-  const parent = pathname.split("/").slice(0, 3).join("/");
-  return TITLE_KEYS[parent] ?? "nav.portal";
+  // the longest known prefix names the page: /cases/case_... is still the Case log
+  const parts = pathname.split("/");
+  for (let n = parts.length; n > 1; n -= 1) {
+    const key = TITLE_KEYS[parts.slice(0, n).join("/")];
+    if (key) return key;
+  }
+  return "nav.portal";
 }
 
 export default function Topbar({ onOpenNav, onToggleRail, railCollapsed }) {

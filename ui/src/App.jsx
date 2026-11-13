@@ -10,6 +10,7 @@ import Dashboard from "./pages/Dashboard.jsx";
 import Analysis from "./pages/Analysis.jsx";
 import Slides from "./pages/Slides.jsx";
 import Cases from "./pages/Cases.jsx";
+import CaseDetail from "./pages/CaseDetail.jsx";
 import Review from "./pages/Review.jsx";
 import ModelCard from "./pages/ModelCard.jsx";
 import Method from "./pages/Method.jsx";
@@ -91,6 +92,7 @@ export default function App() {
         <Route path="/slides" element={<Slides />} />
         <Route path="/review" element={<Review />} />
         <Route path="/cases" element={<Cases />} />
+        <Route path="/cases/:caseId" element={<CaseDetail />} />
         <Route path="/model" element={<ModelCard />} />
         <Route path="/method" element={<Method />} />
         <Route path="/profile" element={<Profile />} />

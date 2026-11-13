@@ -1,0 +1,31 @@
+# Second HER2match fine-tune (norm): learnt from the first attempt (configs/v2_ft_her2match.yaml),
+# which overfit the six HER2match training slides after epoch 2 and did not beat Run B.
+#   * all 13 non-held-out HER2match slides (three 1+, two 2+) instead of the train split's six
+#   * gentler: lr 5e-5, and exactly 2 epochs fixed in advance (no slides left for epoch selection)
+#   * train_site_norm: true -- HER2match tiles re-coloured into the training site's stain space (its DAB is ~8x weaker)
+# Held out throughout: HER2match slides 013, 015, 016, 025 (the portal's test slides).
+base: v2_base.yaml
+run_name: ft2_norm
+data:
+  train_sites: [her2_ihc_40x, her2match]
+  her2_allow_missing: true
+  her2match_root: data/external/her2match/IHC
+  her2match_scores: data/external/her2match/HER2match_scores.csv
+  her2match_min_tumour: 0.08
+  her2match_fit_role: fit_all
+  train_site_norm: true
+  site_profiles: configs/site_profiles/her2_ihc_40x_vs_bci_her2match.json
+train:
+  init_from: artifacts/v2/run_b/best.pt
+  epochs: 2
+  select: last
+  bags_per_epoch: 3000
+  lr: 5.0e-5
+  val_limit_per_class: 150
+  max_minutes: 30
+  resume: true
+eval:
+  sets: [her2_ihc_40x_holdout, her2match_heldout]
+  site_norm: true
+  limit_per_class: 150
+  her2match_limit_per_class: null

@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 import yaml  # noqa: E402
 
 from preprocessing.config import PreprocessingConfig  # noqa: E402
-from training.v2_data import bci_samples, her2_ihc_40x_samples  # noqa: E402
+from training.v2_data import bci_samples, her2_ihc_40x_samples, her2match_samples  # noqa: E402
 
 
 def _merge(base: dict, override: dict) -> dict:
@@ -53,11 +53,21 @@ def build_sets(cfg: dict) -> tuple[list, dict]:
     val_limit = cfg["train"].get("val_limit_per_class")
     fit, val = [], {}
     if "her2_ihc_40x" in sites:
-        fit += her2_ihc_40x_samples(resolve(cfg, "her2_root"), resolve(cfg, "her2_split"), "fit", limit, cfg.get("seed", 0))
-        val["her2_ihc_40x_val"] = her2_ihc_40x_samples(resolve(cfg, "her2_root"), resolve(cfg, "her2_split"), "val", val_limit, cfg.get("seed", 0))
+        # her2_allow_missing: a fine-tuning pod receives only a per-class subset of our fit patches (replay)
+        missing_ok = bool(data.get("her2_allow_missing", False))
+        fit += her2_ihc_40x_samples(resolve(cfg, "her2_root"), resolve(cfg, "her2_split"), "fit", limit, cfg.get("seed", 0), missing_ok)
+        val["her2_ihc_40x_val"] = her2_ihc_40x_samples(resolve(cfg, "her2_root"), resolve(cfg, "her2_split"), "val", val_limit, cfg.get("seed", 0), missing_ok)
     if "bci" in sites:
         fit += bci_samples(resolve(cfg, "bci_root"), "fit", limit_per_class=limit)
         val["bci_val"] = bci_samples(resolve(cfg, "bci_root"), "val", limit_per_class=val_limit)
+    if "her2match" in sites:
+        root, csv = resolve(cfg, "her2match_root"), resolve(cfg, "her2match_scores")
+        min_t = float(data.get("her2match_min_tumour", 0.08))
+        cache = resolve(cfg, "her2match_root").parent / "tumour_scores.json"
+        role = data.get("her2match_fit_role", "fit")
+        fit += her2match_samples(root, csv, role, min_t, limit, cfg.get("seed", 0), cache)
+        if role == "fit":  # with fit_all every non-held-out slide is in training: nothing left to validate on
+            val["her2match_val"] = her2match_samples(root, csv, "val", min_t, val_limit, cfg.get("seed", 0), cache)
     if not fit:
         raise SystemExit(f"No training samples for train_sites={sites}")
     return fit, val

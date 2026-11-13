@@ -103,6 +103,31 @@ export async function downloadFile(path, fallbackName) {
   return true;
 }
 
+/** Sends a file as the raw request body (no base64, so a multi-GB slide is streamed from disk).
+    XHR rather than fetch, because only XHR reports upload progress. */
+export function uploadFile(path, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    if (csrfToken) xhr.setRequestHeader("X-CSRF-Token", csrfToken);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total);
+    xhr.onerror = () => reject(new Error("The server could not be reached."));
+    xhr.onload = () => {
+      let data = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        /* non-JSON answer: fall through to the status check */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new Error(data.error || xhr.statusText || "Upload failed"));
+    };
+    xhr.send(file);
+  });
+}
+
 function saveBlob(blob, disposition, fallbackName) {
   const match = (disposition || "").match(/filename="([^"]+)"/);
   const url = URL.createObjectURL(blob);
@@ -296,4 +321,15 @@ export function readFileAsDataURL(file) {
     reader.onerror = () => reject(new Error("Could not read that file"));
     reader.readAsDataURL(file);
   });
+}
+
+/** The case database: cases visible to the signed-in user (an administrator
+    may narrow to one person's cases), and one case with everything on it. */
+export async function fetchCases(person) {
+  const query = person ? `?person=${encodeURIComponent(person)}` : "";
+  return apiRequest(`/api/cases${query}`);
+}
+
+export async function fetchCase(caseId) {
+  return apiRequest(`/api/cases/${encodeURIComponent(caseId)}`);
 }

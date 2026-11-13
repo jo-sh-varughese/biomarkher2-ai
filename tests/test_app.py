@@ -219,6 +219,37 @@ def analyzer(tmp_path_factory):
     return analyzer
 
 
+def test_analyzer_loads_a_pretrained_config_without_downloading(tmp_path, monkeypatch):
+    """configs/training.yaml says pretrained: true (the encoder was ImageNet-initialised
+    for training). Serving must not re-download those weights: the checkpoint replaces
+    them, and the deployed server has no internet and no writable cache."""
+    import torch
+    import torch.hub
+    import torchvision.models._api as tv_api
+
+    from app.analysis import Analyzer
+    from models import select_architecture
+    from training.config import TrainingConfig
+
+    config = TrainingConfig()
+    config.model.image_size = 64
+    config.model.pretrained = False
+    build_model, _ = select_architecture(config.model.architecture)
+    torch.save({"model_state": build_model(config.model, verbose=False).state_dict(), "epoch": 1},
+               tmp_path / "best.pt")
+    config.model.pretrained = True
+    config.to_yaml(tmp_path / "training.yaml")
+
+    def no_network(*args, **kwargs):
+        raise AssertionError("the Analyzer tried to download weights")
+
+    monkeypatch.setattr(torch.hub, "load_state_dict_from_url", no_network)
+    monkeypatch.setattr(torch.hub, "download_url_to_file", no_network)
+    monkeypatch.setattr(tv_api, "load_state_dict_from_url", no_network)  # torchvision imports it by name
+    analyzer = Analyzer(tmp_path, tmp_path / "training.yaml", "configs/preprocessing.yaml")
+    assert analyzer.checkpoint_epoch == 1
+
+
 def test_prediction_covers_an_image_that_is_not_a_multiple_of_the_tile(analyzer):
     """A silently unpredicted margin would be an invisible bias in the areas."""
     rgb = np.random.default_rng(0).integers(60, 220, (100, 150, 3), dtype=np.uint8)
@@ -707,7 +738,7 @@ def test_reviews_endpoint_serves_the_log_newest_first(tmp_path):
     state = State(FakeAnalyzer(), tmp_path / "missing", tmp_path / "reviews.jsonl")
     with Running(state, role="pathologist", name="AB") as srv:
         status, _, body = srv.request("GET", "/api/reviews")
-        assert status == 200 and json.loads(body) == {"reviews": []}
+        assert status == 200 and json.loads(body) == {"reviews": [], "scope": "own"}
 
         for patch, score, agrees in (("a.png", "2+", True), ("b.png", "cannot assess from this field", False)):
             status, _, _ = srv.request("POST", "/api/review", {

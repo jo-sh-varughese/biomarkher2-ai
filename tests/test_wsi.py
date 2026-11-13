@@ -100,6 +100,20 @@ def test_blue_ink_film_is_flagged_but_tissue_is_not():
     assert blue_cast(ink, glass) > 15
 
 
+def test_dab_stained_tumour_is_never_taken_for_ink():
+    """A 3+ tumour on a scanner that clips glass to white has light-blue stroma as its palest
+    pixels, so its blue cast looks like a film's; its DAB share says it is stained tissue."""
+    from wsi.artefacts import DAB_TISSUE_SHARE, blue_cast, dab_share
+
+    rng = np.random.default_rng(1)
+    tumour = np.full((256, 256, 3), (196, 212, 236), dtype=np.uint8)   # light-blue stroma, no glass gaps
+    tumour[rng.random((256, 256)) < 0.35] = (150, 95, 45)               # DAB-stained membranes
+    ink = np.clip(np.full((256, 256, 3), (200, 207, 226)) + rng.normal(0, 4, (256, 256, 3)), 0, 255).astype(np.uint8)
+    assert blue_cast(tumour, (255, 255, 255)) > 15                       # the old check alone flags it
+    assert dab_share(tumour) > DAB_TISSUE_SHARE                          # ...the DAB guard keeps it
+    assert dab_share(ink) < DAB_TISSUE_SHARE                             # real ink is still caught
+
+
 class _StubAnalyzer:
     """What SlideAnalyzer needs from app.analysis.Analyzer, without a model."""
 
@@ -123,7 +137,10 @@ def test_slide_pipeline_runs_end_to_end_and_reports(tmp_path):
     assert result["cell_evidence"]["cells_measured"] > 0
     assert any("not segmented" in f for f in result["flags"])  # tumour is never segmented -> said so
     assert result["tissue"]["tumour_segmented"] is False and "tumour" not in result
-    assert result["ai_prescore"] is None and result["guidance"]["basis"] == "cell evidence"
+    assert result["ai_prescore"] is None and result["guidance"]["basis"].startswith("cell evidence")
+    prim = result["primary_score"]                                 # the cell-level call is the slide's pre-score
+    assert prim["source"].startswith("cell-level") and set(prim["cumulative_percent"]) == {"at_least_1plus", "at_least_2plus", "3plus"}
+    assert prim["nearest_cut"]["text"] and prim["restricted_to_regions"] is False
     assert {"overview", "excluded_overlay", "grade_overlay"} <= set(result["images"])
     ds = result["cell_evidence"]["decision_support"]
     assert ds["pathway"] and ds["certainty"] and ds["qc"]          # ISH decision support at slide level
@@ -148,13 +165,34 @@ def test_low_magnification_slides_never_get_a_prescore(tmp_path):
     assert "Rescan" in result["guidance"]["next_steps"][0]
 
 
+def test_too_few_cells_gives_no_grade_and_no_ish_suggestion(tmp_path):
+    """A slide where almost every field is rejected (ink, blur) must not read as a grade plus "ISH recommended"
+    from the few cells that remain (K-DISC slide 3: 57 cells in 3 of 40 fields read AI 1+, cells 2+, ISH)."""
+    import dataclasses
+
+    from wsi.analysis import SlideAnalyzer, SlideSettings
+    from wsi.report import build_slide_report_pdf_bytes
+
+    stub = _StubAnalyzer()
+    stub.cell_params = dataclasses.replace(stub.cell_params, min_cells=10**6)  # more than any field holds
+    s = Slide(_synthetic_slide(tmp_path / "s.png"), mpp_override=0.24)
+    result = SlideAnalyzer(stub, SlideSettings(max_fields=2)).run(s)
+    assert result["cell_evidence"]["cells_measured"] > 0
+    assert result["flags"][0].startswith("Insufficient sample")
+    assert result["quality"]["assessable"] is False
+    assert result["primary_score"]["available"] is False and result["primary_score"]["category"] is None
+    assert result["guidance"]["ish"]["level"] == "not_applicable"
+    assert result["guidance"]["suggested_range"] == "Not assessable"
+    assert build_slide_report_pdf_bytes(result)[:4] == b"%PDF"
+
+
 def test_tile_route_matches_the_url_openseadragon_requests():
     """OpenSeadragon derives tile URLs from the descriptor URL: <dzi url>_files/<level>/<col>_<row>.jpeg."""
     import re
 
     from wsi.server_routes import encode_id, routes
 
-    table = routes(lambda method, pattern, handler, perm: (method, pattern, handler))
+    table = routes(lambda method, pattern, handler, perm, **kw: (method, pattern, handler))
     sid = encode_id("39_HER2_val.tif")
     url = f"/api/slides/{sid}/dzi_files/12/3_4.jpeg"
     hits = [h for m, p, h in table if m == "GET" and re.fullmatch(p, url)]
@@ -266,3 +304,133 @@ def test_ink_is_found_without_any_model(tmp_path):
     half = cls.shape[1] // 2
     assert (cls[:, half + 2:] == ARTEFACT).mean() > 0.8       # the inked half
     assert (cls[:, : half - 2] == ARTEFACT).mean() < 0.2      # the tissue half is left alone
+
+
+def test_pale_tissue_on_white_glass_is_found():
+    """A scanner that clips glass to pure white shows pale stroma lighter than the old fixed
+    OD cut-off (0.06) with a blue channel above 0.95; the mask must still find it, and on
+    grey glass the cut-offs must stay as they were."""
+    from wsi.reader import tissue_overview_mask
+
+    rng = np.random.default_rng(2)
+    white = np.full((300, 300, 3), 255, dtype=np.uint8)
+    white[80:220, 80:220] = np.clip(np.array([214, 224, 243]) + rng.normal(0, 3, (140, 140, 3)), 0, 255)
+    mask = tissue_overview_mask(white)
+    assert mask[100:200, 100:200].mean() > 0.95 and not mask[:60].any()
+
+    grey = np.full((300, 300, 3), (234, 235, 237), dtype=np.uint8)  # ACROBAT-like glass
+    grey[80:220, 80:220] = (200, 170, 200)
+    m2 = tissue_overview_mask(grey)
+    assert m2[100:200, 100:200].all() and not m2[:60].any()
+
+
+def test_textured_tissue_is_not_ink_but_a_smooth_film_is():
+    """Blue-tinted tumour (white-glass scanner) is full of nuclei; an ink film is a smooth sheet."""
+    from wsi.artefacts import INK_TEXTURE, block_texture
+
+    rng = np.random.default_rng(3)
+    film = np.clip(np.full((256, 256, 3), (196, 200, 228)) + rng.normal(0, 1.5, (256, 256, 3)), 0, 255).astype(np.uint8)
+    tissue = np.full((256, 256, 3), (200, 214, 238), dtype=np.uint8)
+    ys, xs = rng.integers(0, 252, 900), rng.integers(0, 252, 900)
+    for y, x in zip(ys, xs):  # ~4 px nuclei
+        tissue[y:y + 4, x:x + 4] = (110, 130, 185)
+    assert block_texture(film) < INK_TEXTURE < block_texture(tissue)
+
+
+def test_fields_stay_inside_pathologist_marked_regions():
+    """With a marked tumour region, every field lies inside it, and the edge buffer is measured from the
+    tissue edge, not from the region's own border (a small region must not lose its rim)."""
+    from types import SimpleNamespace
+
+    from wsi.analysis import SlideAnalyzer, SlideSettings
+
+    usable = np.zeros((400, 400), dtype=bool)
+    usable[20:380, 20:380] = True
+    roi = np.zeros_like(usable)
+    roi[150:250, 150:250] = True
+    slide = SimpleNamespace(info=SimpleNamespace(mpp=None))
+    sa = SlideAnalyzer(_StubAnalyzer(), SlideSettings(max_fields=40))
+    fields, fo = sa._choose_fields(usable & roi, 8.0, slide, None, edge_from=usable)
+    assert fields
+    assert all(roi[r:r + fo, c:c + fo].mean() >= 0.5 for _, r, c in fields)
+
+
+def test_primary_score_states_the_call_and_its_distance_from_the_cut_off():
+    from wsi.analysis import primary_score
+
+    cells = {"cells_measured": 3424, "percent": {"0": 96.5, "1+": 2.5, "2+": 0.7, "3+": 0.2},
+             "percent_at_least_1plus": 3.4, "percent_at_least_2plus": 0.9, "field_category": "0"}
+    p = primary_score(cells, {"category": "0"}, [], 100)
+    assert p["available"] and p["category"] == "0" and p["agrees_with_ai"] is True
+    assert p["cumulative_percent"] == {"at_least_1plus": 3.4, "at_least_2plus": 0.9, "3plus": 0.2}
+    assert p["nearest_cut"]["grade"] == "1+" and p["nearest_cut"]["gap_points"] == -6.6
+    assert any("automatically" in r for r in p["review"])          # no regions marked -> said so
+
+    border = dict(cells, percent_at_least_1plus=11.0, field_category="1+")
+    p = primary_score(border, {"category": "0"}, [{"x": 0, "y": 0, "w": 1, "h": 1}], 100)
+    assert p["category"] == "1+" and p["agrees_with_ai"] is False
+    assert any("within 3 points" in r for r in p["review"]) and any("differs" in r for r in p["review"])
+
+    assert primary_score(dict(cells, cells_measured=20), None, [], 100)["available"] is False  # too few cells
+
+
+def test_a_diluted_2plus_focus_is_never_told_ish_not_indicated():
+    # HER2match 025 (a 2+ slide): 1.4% of all cells >=2+, but 4 of 40 fields are 2+/3+ on their own
+    from app.guidance import recommend
+    from wsi.analysis import focal_high_fields, primary_score
+
+    fields = ([{"index": i, "cell_category": "0", "cells": 300, "cells_at_least_2plus_pct": 0.0} for i in range(36)]
+              + [{"index": 36, "cell_category": "2+", "cells": 45, "cells_at_least_2plus_pct": 40.0},   # small but clearly 2+
+                 {"index": 37, "cell_category": "3+", "cells": 49, "cells_at_least_2plus_pct": 60.0},
+                 {"index": 38, "cell_category": "2+", "cells": 22, "cells_at_least_2plus_pct": 13.6},   # 3 of 22: not sure
+                 {"index": 39, "cell_category": "1+", "cells": 300, "cells_at_least_2plus_pct": 4.0}])
+    focal = focal_high_fields(fields)
+    assert [f["index"] for f in focal] == [36, 37]
+
+    cells = {"cells_measured": 9000, "percent": {"0": 94.8, "1+": 3.8, "2+": 0.9, "3+": 0.5},
+             "percent_at_least_1plus": 5.2, "percent_at_least_2plus": 1.4, "field_category": "0", "flags": []}
+    p = primary_score(cells, {"category": "0"}, [], 100, focal=focal)
+    assert p["category"] == "0"                                      # the grade itself is not forced
+    assert len(p["focal_2plus_fields"]) == 2 and any("diluted" in r for r in p["review"])
+
+    policy = {"status": "shadow_mode"}
+    assert recommend(None, cells, policy, cells_primary=True)["ish"]["level"] == "not_indicated_by_ihc"
+    g = recommend(None, cells, policy, cells_primary=True, focal_2plus=len(focal))
+    assert g["ish"]["level"] == "recommended" and "2+/3+ field" in g["ish"]["text"]
+
+
+def test_no_focal_fields_on_a_clean_negative_slide():
+    from wsi.analysis import focal_high_fields
+
+    fields = [{"index": i, "cell_category": c, "cells": 300, "cells_at_least_2plus_pct": 1.0}
+              for i, c in enumerate(["0"] * 35 + ["1+"] * 5)]
+    assert focal_high_fields(fields) == []
+
+
+def test_field_scoring_reads_bounded_tiles_however_wide_the_tissue():
+    """Field selection once read the tissue in bands as wide as the whole section; a wide K-DISC
+    slide needed several GB per band and the server was killed on an 8 GB VM (2026-11-11)."""
+    from types import SimpleNamespace
+
+    from wsi.analysis import SELECT_MPP, SELECT_TILE_PX, SlideAnalyzer
+
+    reads = []
+
+    class WideSlide:
+        info = SimpleNamespace(mpp=0.286)
+
+        def read(self, x, y, w, h, target_mpp=None):
+            s = self.info.mpp / target_mpp
+            out = (max(1, int(round(h * s))), max(1, int(round(w * s))))
+            reads.append(out)
+            return np.full(out + (3,), 200, dtype=np.uint8)
+
+    factor, fo = 8.0 / 0.286, 31  # overview px -> level-0 px; one 1024 px field at 0.24 um/px in overview px
+    # 4 rows x 150 columns of candidate fields: a section ~4,650 overview px (~37 mm) wide.
+    cands = [(0.0, r * fo, c * fo) for r in range(4) for c in range(150)]
+    scores = SlideAnalyzer._field_scores(WideSlide(), cands, fo, factor)
+
+    assert scores.shape == (len(cands),)
+    scale = factor * 0.286 / SELECT_MPP
+    bound = SELECT_TILE_PX + 4 * fo * scale  # one tile plus a field and its context margin on each side
+    assert max(max(h, w) for h, w in reads) <= bound

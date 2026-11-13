@@ -217,7 +217,15 @@ def train(cfg: dict, fit_samples: list[Sample], val_sets: dict[str, list[Sample]
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    model = build_multitask(cfg["model"], weights_dir=cfg.get("weights_dir")).to(device).to(memory_format=torch.channels_last)
+    init_from = tcfg.get("init_from")
+    if init_from:
+        # fine-tune: start from a trained checkpoint (weights and the encoder's RGB statistics),
+        # not from the pathology-pretrained encoder alone
+        init_path = Path(init_from) if Path(init_from).is_absolute() else Path(__file__).resolve().parents[1] / init_from
+        model = load_model(init_path, device).train()
+        log(f"Initialised from {init_path}")
+    else:
+        model = build_multitask(cfg["model"], weights_dir=cfg.get("weights_dir")).to(device).to(memory_format=torch.channels_last)
     criterion = MultiTaskLoss(cfg.get("loss", {})).to(device)
     optimizer = torch.optim.AdamW(_param_groups(model, float(tcfg["lr"]), float(tcfg.get("encoder_lr_mult", 0.3)),
                                                 float(tcfg.get("weight_decay", 1e-4))), weight_decay=float(tcfg.get("weight_decay", 1e-4)))
@@ -301,7 +309,8 @@ def train(cfg: dict, fit_samples: list[Sample], val_sets: dict[str, list[Sample]
         for name, samples in val_sets.items():
             rows = predict(model, samples, device, prep, int(tcfg.get("eval_batch", 4)), workers, site_norm=shared, amp_dtype=amp_dtype)
             val[name] = summarize(rows)
-        selection = float(np.mean([v["qwk"] for v in val.values()])) if val else -float(loss)
+        qwks = [v["qwk"] for v in val.values() if v["qwk"] == v["qwk"]]  # a one-class set has no QWK (NaN)
+        selection = float(np.mean(qwks)) if qwks else -float(loss)
         record = {"epoch": epoch + 1, "selection_mean_qwk": selection, "minutes": (time.time() - started) / 60,
                   "epoch_tiles_per_s": tiles_rate / max(1e-6, (t_train_end or time.time()) - (t_rate or t_epoch)),
                   **{f"{n}_{k}": round(v[k], 4) for n, v in val.items() for k in ("accuracy", "balanced_accuracy", "qwk")}}
@@ -310,6 +319,8 @@ def train(cfg: dict, fit_samples: list[Sample], val_sets: dict[str, list[Sample]
         state["epoch"] = epoch + 1
         checkpoint = {"model_state": model.state_dict(), "model_config": model.config, "config": cfg,
                       "optimizer_state": optimizer.state_dict(), "scaler_state": scaler.state_dict(), "state": state}
+        if tcfg.get("select") == "last":  # epoch count fixed in advance: the final epoch is the model
+            selection = max(selection, state["best"] + 1e-9)
         if selection > state["best"]:
             state["best"] = selection
             checkpoint["state"] = state
@@ -344,7 +355,10 @@ def shared_space_norm(cfg: dict, root: Path | None = None) -> dict | None:
         return None
     root = root or Path(__file__).resolve().parents[1]
     profiles = json.loads((root / cfg["data"]["site_profiles"]).read_text(encoding="utf-8"))
-    return {"bci": (profiles["bci_crop2x"], profiles["source"])}
+    out = {"bci": (profiles["bci_crop2x"], profiles["source"])}
+    if "her2match" in profiles:
+        out["her2match"] = (profiles["her2match"], profiles["source"])
+    return out
 
 
 def load_model(checkpoint: Path, device) -> HER2MultiTask:

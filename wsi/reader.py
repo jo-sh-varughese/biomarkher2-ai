@@ -98,14 +98,25 @@ class Slide:
 
 
 def tissue_overview_mask(rgb: np.ndarray, min_area_px: int = 64) -> np.ndarray:
-    """Tissue vs glass on a low-resolution overview (grey optical density + saturation, cleaned)."""
+    """Tissue vs glass on a low-resolution overview (grey optical density + saturation, cleaned).
+
+    The density and brightness cut-offs are set relative to this slide's own glass.
+    Fixed cut-offs (OD > 0.06, brightest channel < 0.95) were tuned on a scanner whose
+    glass is grey (~235); a scanner that clips glass to pure white (3DHistech, HER2match)
+    shows pale stroma lighter than OD 0.06 with a blue channel above 0.95, and only the
+    dark cut edges and debris were found as tissue. On grey glass the cut-offs come out
+    unchanged (they are clamped to the old values).
+    """
     from scipy import ndimage
 
     arr = rgb.astype(np.float64) / 255.0
     od = -np.log10(np.clip(arr, 1 / 255, 1)).mean(-1)
     mx, mn = arr.max(-1), arr.min(-1)
     sat = np.where(mx > 0, (mx - mn) / np.maximum(mx, 1e-6), 0)
-    mask = (od > 0.06) & (sat > 0.04) & (mx < 0.95) & (mx > 0.05)
+    glass_od = float(np.percentile(od, 5))
+    od_cut = float(np.clip(glass_od + 0.025, 0.02, 0.06))
+    mx_cut = max(0.95, float(np.percentile(mx, 95)) - 0.015)
+    mask = (od > od_cut) & (sat > 0.04) & (mx < mx_cut) & (mx > 0.05)
     mask = ndimage.binary_closing(mask, iterations=2)
     mask = ndimage.binary_opening(mask, iterations=1)
     labels, n = ndimage.label(mask)

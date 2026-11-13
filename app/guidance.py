@@ -57,8 +57,16 @@ QUALITY_ACTIONS = {
 
 
 def recommend(prescore: dict | None, cells: dict, gate: dict, extra_flags: list[str] | None = None,
-              assessable: bool = True, near_2plus: bool = False, quality: dict | None = None) -> dict:
+              assessable: bool = True, near_2plus: bool = False, quality: dict | None = None,
+              cells_primary: bool = False, focal_2plus: int = 0) -> dict:
     """``prescore``: PrescoreResult.public() when it may be used, else None. ``cells``: app.cells summary.
+    ``cells_primary``: the cell-level ASCO/CAP call is the pre-score (whole slides at a new site, where the
+    attention-pooled AI score misses faint 1+/2+); the AI score is then a second opinion -- its disagreement is a
+    caution and can still push toward ISH, but it does not set the grade.
+
+    ``focal_2plus``: number of whole-slide fields the cell rule grades 2+/3+ on their own
+    (wsi.analysis.focal_high_fields). A 0/1+ slide with any such field never reads as "ISH not indicated":
+    the slide-wide percentage is diluted by non-tumour tissue, so those fields go to the pathologist first.
 
     ``assessable=False`` (e.g. a slide scanned below ~20x) never yields a grade-based
     suggestion: an unassessable slide must not read as "ISH not indicated".
@@ -78,7 +86,16 @@ def recommend(prescore: dict | None, cells: dict, gate: dict, extra_flags: list[
     steps: list[str] = []
     cautions: list[str] = []
 
-    if prescore is None:
+    if cells_primary and cell_grade is not None:
+        basis = "cell evidence (primary); AI second opinion" if prescore is not None else "cell evidence (primary)"
+        grade = cell_grade
+        if prescore is not None:
+            d = _distance(prescore["category"], cell_grade)
+            if d is not None and d >= 2:
+                cautions.append(f"AI second opinion {prescore['category']} and the cell-level pre-score {cell_grade} disagree by {d} grades.")
+            elif d == 1:
+                cautions.append(f"AI second opinion {prescore['category']} and the cell-level pre-score {cell_grade} differ by one grade.")
+    elif prescore is None:
         basis = "cell evidence"
         grade = cell_grade
         cautions.append("The AI pre-score is withheld at this site (not yet locally validated); "
@@ -121,7 +138,14 @@ def recommend(prescore: dict | None, cells: dict, gate: dict, extra_flags: list[
         status = "HER2-negative range (IHC 1+, HER2-low)" if grade == "1+" else "HER2-negative range (IHC 0)"
         near_2 = (near_2plus or (prescore is not None and prescore["probabilities"].get("2+", 0) >= 0.25)
                   or cells.get("percent_at_least_2plus", 0) > 10)
-        if near_2 or any("disagree" in c for c in cautions):
+        if focal_2plus:
+            cautions.append(f"{focal_2plus} field(s) are 2+/3+ by the cell rule on their own; the slide-wide "
+                            f"{grade} counts all tissue, so a 2+ tumour area may be diluted.")
+            ish = {"level": "recommended",
+                   "text": f"Review the {focal_2plus} highlighted 2+/3+ field(s) before reporting {grade}: if the invasive "
+                           "tumour there is 2+, reflex ISH is required; if 3+, the case is HER2-positive."}
+            steps.append("Open the highlighted 2+/3+ fields first and judge whether they are invasive tumour.")
+        elif near_2 or any("disagree" in c for c in cautions):
             ish = {"level": "recommended", "text": "Consider ISH or a second review: evidence points toward the 2+ boundary."}
         else:
             ish = {"level": "not_indicated_by_ihc", "text": "ISH not indicated by a confirmed IHC 0/1+."}

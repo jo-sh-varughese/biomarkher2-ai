@@ -165,13 +165,45 @@ def _summary_page(a: dict, st, title: str = "HER2 IHC pre-scoring report", meta:
     for note in (quality.get("notes") or []) if quality else []:
         flow.append(Paragraph(f"&#9432; {_escape(note)}", st["small"]))
 
+    # --- primary pre-score: the cell-level call (whole slides) ----------------
+    primary = a.get("primary_score") or {}
+    if primary.get("available") and not (quality and not quality.get("assessable", True)):
+        cat = primary["category"]
+        cum = primary["cumulative_percent"]
+        left = [Paragraph("PRE-SCORE (cell measurement, ASCO/CAP 10% rule)", st["label"]),
+                Paragraph(f'<font color="{GRADE_COLORS.get(cat, "#1f2329")}"><b>IHC {cat}</b></font>', st["big"]),
+                Paragraph(f"{primary['cells_measured']} cells measured &middot; "
+                          + ("inside the pathologist-marked tumour regions" if primary.get("restricted_to_regions")
+                             else "fields chosen automatically (no tumour regions marked)"), st["small"])]
+        right = [Paragraph("What the call rests on (% of cells)", st["label"]),
+                 _grid([["Cells at 1+ or above", "at 2+ or above", "at 3+"],
+                        [f"{cum['at_least_1plus']:.1f}%", f"{cum['at_least_2plus']:.1f}%", f"{cum['3plus']:.1f}%"]],
+                       [32 * mm, 30 * mm, 22 * mm]),
+                 Paragraph(f"Each grade needs <b>more than 10%</b> of tumour cells. Nearest cut-off: "
+                           f"{_escape(primary['nearest_cut']['text'])} "
+                           f"({primary['nearest_cut']['gap_points']:+.1f} points).", st["small"])]
+        if primary.get("ai_second_opinion"):
+            right.append(Paragraph(f"AI second opinion: IHC {primary['ai_second_opinion']} -- "
+                                   + ("agrees." if primary.get("agrees_with_ai") else "<b>differs: review.</b>"), st["small"]))
+        box = Table([[left, right]], colWidths=[CONTENT_WIDTH * 0.42, CONTENT_WIDTH * 0.58])
+        box.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BACKGROUND", (0, 0), (-1, -1), PANEL),
+                                 ("BOX", (0, 0), (-1, -1), 0.9, RULE), ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                                 ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+        flow.append(box)
+        for r in primary.get("review", []):
+            flow.append(Paragraph(f"&#9888; {_escape(r)}", st["small"]))
+        flow.append(Spacer(1, 4 * mm))
+    elif primary and not primary.get("available") and primary.get("unavailable_reasons"):
+        flow.append(Paragraph("No cell-level pre-score: " + _escape("; ".join(primary["unavailable_reasons"])) + ".", st["small"]))
+
     # --- AI pre-score -------------------------------------------------------
     if quality and not quality.get("assessable", True):
         pass
     elif pre.get("shown") and pre.get("prescore"):
         p = pre["prescore"]
         grade_colour = GRADE_COLORS.get(p["category"], "#1f2329")
-        left = [Paragraph("AI PRE-SCORE (suggestion)", st["label"]),
+        ai_title = "AI SECOND OPINION (whole-slide model)" if primary.get("available") else "AI PRE-SCORE (suggestion)"
+        left = [Paragraph(ai_title, st["label"]),
                 Paragraph(f'<font color="{grade_colour}"><b>IHC {p["category"]}</b></font>', st["big"]),
                 Paragraph(f"Confidence {p['confidence']:.0%} &middot; runner-up {p['runner_up']} "
                           f"(margin {p['margin_to_runner_up']:.0%})" + (" &middot; <b>borderline</b>" if p.get("borderline") else ""),
@@ -182,7 +214,10 @@ def _summary_page(a: dict, st, title: str = "HER2 IHC pre-scoring report", meta:
                                   f"(conformal, calibrated on {ps['n_cases']} cases at this site)", st["small"]))
         if p.get("heterogeneity", {}).get("heterogeneous"):
             left.append(Paragraph("<b>Regional heterogeneity detected</b> -- see page 2.", st["small"]))
-        right = [Paragraph("Probability by grade", st["label"]), _prob_bars(p["probabilities"], st)]
+        right = [Paragraph("Model confidence by grade -- NOT a percentage of cells", st["label"]),
+                 _prob_bars(p["probabilities"], st),
+                 Paragraph("How sure the AI is about each grade for the image as a whole (adds up to 100%); its call is the "
+                           "highest bar. The 10% rule applies to the cell percentages, not to these.", st["small"])]
         box = Table([[left, right]], colWidths=[CONTENT_WIDTH * 0.45, CONTENT_WIDTH * 0.55])
         box.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BACKGROUND", (0, 0), (-1, -1), PANEL),
                                  ("BOX", (0, 0), (-1, -1), 0.6, RULE), ("LEFTPADDING", (0, 0), (-1, -1), 8),
@@ -223,7 +258,7 @@ def _summary_page(a: dict, st, title: str = "HER2 IHC pre-scoring report", meta:
         pct = cells.get("percent", {})
         data = [["Cells measured", "IHC 0", "1+ (faint, incomplete)", "2+ (complete, weak-mod.)", "3+ (complete, intense)"],
                 [str(cells.get("cells_measured", 0))] + [f"{pct.get(g, 0):.1f}%" for g in ("0", "1+", "2+", "3+")]]
-        flow.append(Paragraph("Cell-level ASCO/CAP evidence", st["h"]))
+        flow.append(Paragraph("Percentage of cells by category (ASCO/CAP 10% rule)", st["h"]))
         flow.append(_grid(data, [28 * mm, 22 * mm, 40 * mm, 44 * mm, 42 * mm]))
         if cells.get("field_category"):
             notes = [f"Field category by the ASCO/CAP 10% rule: <b>IHC {cells.get('field_category')}</b> -- {_escape(cells.get('rule_applied', ''))}."]
@@ -242,7 +277,7 @@ def _summary_page(a: dict, st, title: str = "HER2 IHC pre-scoring report", meta:
     box = "[&nbsp;&nbsp;]"  # Helvetica has no empty-box glyph; a filled square would read as already ticked
     rows = [[Paragraph("<b>Pathologist confirmation</b> (completed by the reporting pathologist)", st["body"])],
             [Paragraph(f"Final IHC score: {box} 0 &nbsp; {box} ultralow &nbsp; {box} 1+ &nbsp; {box} 2+ &nbsp; {box} 3+ "
-                       f"&nbsp;&nbsp;&nbsp; Agrees with AI pre-score: {box} yes {box} no", st["body"])],
+                       f"&nbsp;&nbsp;&nbsp; Agrees with pre-score: {box} yes {box} no", st["body"])],
             [Paragraph(f"ISH ordered: {box} yes {box} no &nbsp;&nbsp;&nbsp; Control tissue acceptable: {box} yes {box} no "
                        f"&nbsp;&nbsp;&nbsp; Invasive tumour present: {box} yes {box} no", st["body"])],
             [Paragraph("Comments: ________________________________________________________________________________", st["body"])],

@@ -53,6 +53,9 @@ import { resolveCaveats } from "../i18n/caveats.js";
 // Shown as tabs on the viewer; the other views sit in its "More views" list.
 const PRIMARY_VIEWS = ["original", "cells", "evidence", "isolate"];
 
+const FIELD_UPLOAD_LIMIT = 24 * 1024 * 1024; // app/server.py MAX_UPLOAD_BYTES
+const WSI_EXT = /\.(svs|ndpi|mrxs|scn|bif|vms|vmu|svslide)$/i; // whole-slide formats (large .tif/.tiff caught by size)
+
 const VIEWS = [
   { key: "original", hasNote: true },
   { key: "tissue", hasNote: true },
@@ -86,6 +89,8 @@ export default function Analysis() {
   const [site, setSite] = useState("breast");
   const [view, setView] = useState("model");
   const [compare, setCompare] = useState(false);
+  // The two images the compare wipe shows: left of the handle, right of it.
+  const [compareSides, setCompareSides] = useState({ left: "model", right: "baseline" });
   // Drawing is a mode, not the default: with the layer always live, a swipe
   // on the image could never scroll a phone's page and a click could never
   // open the enlarged view.
@@ -149,6 +154,12 @@ export default function Analysis() {
   /* ------------------------------------------------------------- run --- */
 
   const run = useCallback(async () => {
+    // A whole-slide file (or anything over the upload limit) cannot go through field analysis: the
+    // browser cannot even encode a 600 MB slide for upload, and it arrived empty. Say where it belongs.
+    if (file && (file.size > FIELD_UPLOAD_LIMIT || WSI_EXT.test(file.name))) {
+      toast.error(t("analysis.wsiTitle"), t("analysis.wsiBody", { mb: Math.round(file.size / 1e6) }));
+      return;
+    }
     setRunning(true);
     try {
       const body = file
@@ -327,6 +338,15 @@ export default function Analysis() {
   const viewTitle = (key) =>
     key === "isolate" ? t("analysis.views.isolate", { label: focusLabel ?? "" }) : t(`analysis.views.${key}`);
   const annotations = analysis?.annotations ?? [];
+  const imageFor = (key) => (key === "isolate" ? isolateImage : analysis?.images?.[key]);
+  // Any two available views can be compared; a side whose view is missing
+  // (e.g. no baseline on this server) falls back to the first one available.
+  const compareKeys = availableViews.map((v) => v.key);
+  const sideKey = (side, fallbackIndex) =>
+    compareKeys.includes(compareSides[side]) ? compareSides[side] : compareKeys[fallbackIndex] ?? compareKeys[0];
+  const leftKey = sideKey("left", 0);
+  const rightKey = sideKey("right", 1);
+  const canCompare = compareKeys.length >= 2;
   const detailTabs = analysis
     ? [
         analysis.cell_evidence?.decision_support ? "decision" : null,
@@ -387,7 +407,7 @@ export default function Analysis() {
             <Icon name="pen" size={15} />
             <span>{t(annotating ? "analysis.annotate.done" : "analysis.annotate.toggle")}</span>
           </button>
-          {analysis.images.baseline ? (
+          {canCompare ? (
             <button
               type="button"
               className={`tool${compare ? " is-on" : ""}`}
@@ -409,9 +429,43 @@ export default function Analysis() {
         </div>
       </div>
 
+      {compare && canCompare ? (
+        <div className="compare-pick" role="group" aria-label={t("analysis.compareChoose")}>
+          {[
+            ["left", leftKey],
+            ["right", rightKey],
+          ].map(([side, current]) => (
+            <label key={side} className="compare-pick__side">
+              <span>{t(`analysis.compareSide.${side}`)}</span>
+              <select
+                className="select select--sm"
+                value={current}
+                onChange={(e) => setCompareSides((prev) => ({ ...prev, [side]: e.target.value }))}
+              >
+                {compareKeys.map((key) => (
+                  <option key={key} value={key}>{viewTitle(key)}</option>
+                ))}
+              </select>
+            </label>
+          ))}
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={() => setCompareSides({ left: rightKey, right: leftKey })}
+            title={t("analysis.compareSwap")}
+          >
+            <Icon name="refresh" size={14} /> {t("analysis.compareSwap")}
+          </button>
+        </div>
+      ) : null}
+
       <div className={`viewer__stage${annotating ? " is-annotating" : ""}`}>
-        {compare && analysis.images.baseline ? (
-          <Wipe base={analysis.images.model} top={analysis.images.baseline} alt={t("analysis.compareCaption")} />
+        {compare && canCompare ? (
+          <Wipe
+            base={imageFor(leftKey)}
+            top={imageFor(rightKey)}
+            alt={t("analysis.compareSidesCaption", { left: viewTitle(leftKey), right: viewTitle(rightKey) })}
+          />
         ) : (
           <div className="viewer__frame">
             <img
@@ -438,13 +492,22 @@ export default function Analysis() {
 
       <div className="viewer__caption">
         <div className="viewer__caption-text">
-          <b>{compare ? t("analysis.compareCaption") : viewTitle(view)}</b>
-          <span>{compare ? t("analysis.compareNote") : viewNote(view, context, t)}</span>
+          <b>
+            {compare
+              ? t("analysis.compareSidesCaption", { left: viewTitle(leftKey), right: viewTitle(rightKey) })
+              : viewTitle(view)}
+          </b>
+          <span>
+            {compare
+              ? t("analysis.compareSidesNote", { left: viewTitle(leftKey), right: viewTitle(rightKey) })
+              : viewNote(view, context, t)}
+          </span>
         </div>
         {!compare && view === "heatmap" ? (
           <HeatLegend legend={context?.heatmap_legend} title={t("analysis.heatLegend")} lowLabel={t("analysis.heatLow")} />
         ) : null}
-        {compare || view === "model" || view === "baseline" ? (
+        {(compare && [leftKey, rightKey].some((k) => k === "model" || k === "baseline")) ||
+        (!compare && (view === "model" || view === "baseline")) ? (
           <div className="legend legend--plain">
             {classes
               .filter((c) => c.index > 0)

@@ -14,7 +14,7 @@ import DecisionPanel from "../components/DecisionPanel.jsx";
 import ExplainPanel from "../components/ExplainPanel.jsx";
 import Icon from "../components/Icon.jsx";
 import { useI18n } from "../i18n/I18nContext.jsx";
-import { apiRequest, downloadFile } from "../lib/api.js";
+import { apiRequest, downloadFile, uploadFile } from "../lib/api.js";
 import { usePortal } from "../state/PortalContext.jsx";
 
 const OVERLAYS = ["excluded_overlay", "grade_overlay"];
@@ -30,6 +30,14 @@ export default function Slides() {
   const [job, setJob] = useState(null);
   const [overlay, setOverlay] = useState("excluded_overlay");
   const [detail, setDetail] = useState("decision");
+  // Pathologist-marked invasive tumour, as level-0 slide boxes {x, y, w, h}. When present, the
+  // analysis places its fields only inside them (wsi/analysis.py SlideAnalyzer.run regions=...).
+  const [regions, setRegions] = useState([]);
+  const [marking, setMarking] = useState(false);
+  const [draft, setDraft] = useState(null);
+  const [uploading, setUploading] = useState(null); // upload progress 0..1, null when idle
+  const fileInput = useRef(null);
+  const drawStart = useRef(null);
   const viewerEl = useRef(null);
   const viewer = useRef(null);
   const overlayItem = useRef(null);
@@ -43,6 +51,8 @@ export default function Slides() {
     if (!current || !viewerEl.current) return undefined;
     setInfo(null);
     setJob(null);
+    setRegions([]);
+    setMarking(false);
     apiRequest(`/api/slides/${current}/info`).then(setInfo).catch((e) => setError(e.message));
     apiRequest(`/api/slides/${current}/analysis`).then(setJob).catch(() => {});
     const v = OpenSeadragon({
@@ -74,6 +84,65 @@ export default function Slides() {
     return () => clearInterval(id);
   }, [current, job]);
 
+  /* marked regions are drawn as viewer overlays, so they stay put while panning and zooming */
+  useEffect(() => {
+    const v = viewer.current;
+    if (!v) return undefined;
+    const draw = () => {
+      v.clearOverlays();
+      regions.forEach((g, i) => {
+        const el = document.createElement("div");
+        el.className = "slides__roi";
+        el.dataset.n = String(i + 1);
+        v.addOverlay({ element: el, location: v.viewport.imageToViewportRectangle(g.x, g.y, g.w, g.h) });
+      });
+    };
+    if (v.world.getItemCount() > 0) draw();
+    else v.addOnceHandler("open", draw);
+    return undefined;
+  }, [regions, current]);
+
+  /* panning is off while marking, so a drag draws a box instead of moving the slide */
+  useEffect(() => {
+    viewer.current?.setMouseNavEnabled(!marking);
+  }, [marking]);
+
+  const toImage = (event) => {
+    const v = viewer.current;
+    const box = viewerEl.current?.getBoundingClientRect();
+    if (!v || !box) return null;
+    const p = v.viewport.viewerElementToImageCoordinates(new OpenSeadragon.Point(event.clientX - box.left, event.clientY - box.top));
+    return { x: p.x, y: p.y, sx: event.clientX - box.left, sy: event.clientY - box.top };
+  };
+
+  const drawDown = (event) => {
+    const p = toImage(event);
+    if (!p) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drawStart.current = p;
+    setDraft({ left: p.sx, top: p.sy, width: 0, height: 0 });
+  };
+  const drawMove = (event) => {
+    const a = drawStart.current;
+    const p = a && toImage(event);
+    if (!p) return;
+    setDraft({ left: Math.min(a.sx, p.sx), top: Math.min(a.sy, p.sy), width: Math.abs(p.sx - a.sx), height: Math.abs(p.sy - a.sy) });
+  };
+  const drawUp = (event) => {
+    const a = drawStart.current;
+    const p = a && toImage(event);
+    drawStart.current = null;
+    setDraft(null);
+    if (!p || !info) return;
+    const x0 = Math.max(0, Math.min(a.x, p.x));
+    const y0 = Math.max(0, Math.min(a.y, p.y));
+    const x1 = Math.min(info.info.width, Math.max(a.x, p.x));
+    const y1 = Math.min(info.info.height, Math.max(a.y, p.y));
+    // ignore a click or a sliver: a region must be at least ~250 um across at 0.25 um/px
+    if (x1 - x0 < 1000 || y1 - y0 < 1000) return;
+    setRegions((list) => [...list, { x: Math.round(x0), y: Math.round(y0), w: Math.round(x1 - x0), h: Math.round(y1 - y0) }]);
+  };
+
   /* draw the chosen overlay over the whole slide */
   const result = job?.status === "done" ? job.result : null;
   useEffect(() => {
@@ -100,9 +169,28 @@ export default function Slides() {
     else v.addOnceHandler("open", draw);
   }, [result, overlay]);
 
+  const upload = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = ""; // so the same file can be chosen again
+    if (!file) return;
+    setError(null);
+    setUploading(0);
+    try {
+      const added = await uploadFile(`/api/slides/upload?name=${encodeURIComponent(file.name)}`, file, setUploading);
+      const d = await apiRequest("/api/slides");
+      setSlides(d.slides);
+      setCurrent(added.id);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setUploading(null);
+    }
+  };
+
   const analyse = async () => {
     try {
-      setJob(await apiRequest(`/api/slides/${current}/analyze`, { method: "POST", body: {} }));
+      setMarking(false);
+      setJob(await apiRequest(`/api/slides/${current}/analyze`, { method: "POST", body: regions.length ? { regions } : {} }));
     } catch (e) {
       setError(e.message);
     }
@@ -167,6 +255,17 @@ export default function Slides() {
         <div className="study__rail">
           <section className="card card--pad">
             <h2 className="source__title">{t("slides.list")}</h2>
+            <input ref={fileInput} type="file" hidden onChange={upload}
+              accept=".svs,.ndpi,.mrxs,.scn,.tif,.tiff,.bif,.vms,.vmu,.svslide,.png,.jpg,.jpeg" />
+            <button type="button" className="btn btn--block" onClick={() => fileInput.current?.click()}
+              disabled={uploading !== null} {...(uploading !== null ? { "data-busy": "" } : {})}>
+              <Icon name="upload" size={16} /> {uploading !== null ? t("slides.uploading", { pct: Math.round(uploading * 100) }) : t("slides.upload")}
+            </button>
+            {uploading !== null ? (
+              <div className="slides__progress" aria-live="polite">
+                <div className="prescore__track"><span style={{ width: `${Math.round(uploading * 100)}%`, background: "var(--accent, #2a78d6)" }} /></div>
+              </div>
+            ) : null}
             {slides === null ? (
               <p className="hint">{t("slides.loading")}</p>
             ) : slides.length === 0 ? (
@@ -196,6 +295,20 @@ export default function Slides() {
                 {info.info.vendor}
               </p>
               {!info.magnification_ok ? <p className="prescore__flag">{t("slides.lowMag")}</p> : null}
+              <div className="slides__regions">
+                <div className="toggle-row">
+                  <button type="button" className={`chip${marking ? " is-active" : ""}`} onClick={() => setMarking((m) => !m)}
+                    disabled={running}>
+                    <Icon name="pen" size={14} /> {marking ? t("slides.doneMarking") : t("slides.markRegions")}
+                  </button>
+                  {regions.length ? (
+                    <button type="button" className="chip" onClick={() => setRegions([])} disabled={running}>
+                      <Icon name="x" size={14} /> {t("slides.clearRegions")}
+                    </button>
+                  ) : null}
+                </div>
+                <p className="hint">{regions.length ? t("slides.regionsCount", { n: regions.length }) : t("slides.regionsHint")}</p>
+              </div>
               <button type="button" className="btn btn--primary btn--lg btn--block" onClick={analyse} disabled={running}
                 {...(running ? { "data-busy": "" } : {})}>
                 <Icon name="scan" size={18} /> {t("slides.analyse")}
@@ -228,6 +341,13 @@ export default function Slides() {
 
         <div className="study__main">
           <section className="card viewer">
+            {marking && current ? (
+              <div className="slides__drawlayer" onPointerDown={drawDown} onPointerMove={drawMove} onPointerUp={drawUp}
+                onPointerCancel={() => { drawStart.current = null; setDraft(null); }}>
+                <span className="viewer__mode" role="status"><Icon name="pen" size={13} /> {t("slides.markingMode")}</span>
+                {draft ? <span className="slides__roi slides__roi--draft" style={draft} /> : null}
+              </div>
+            ) : null}
             <div ref={viewerEl} className={`slides__osd${current ? "" : " is-empty"}`} aria-label={t("slides.viewer")}>
               {!current ? (
                 <div className="empty slides__placeholder">

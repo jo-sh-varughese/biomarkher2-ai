@@ -31,6 +31,7 @@
 import { PRESCORE_STRINGS } from "./strings.prescore.js";
 import { REVIEW_STRINGS } from "./strings.review.js";
 import { AUTH_STRINGS } from "./strings.auth.js";
+import { CASEDB_STRINGS } from "./strings.casedb.js";
 
 export const STRINGS = {
   /* ------------------------------------------------------------ English --- */
@@ -447,7 +448,14 @@ export const STRINGS = {
       signingAs: "Signing as",
       record: "Record my assessment",
       compare: "Compare",
-      compareTitle: "Wipe between the model map and the threshold baseline",
+      compareTitle: "Compare any two image views with a draggable wipe",
+      compareChoose: "Images to compare",
+      wsiTitle: "This is a whole-slide image",
+      wsiBody: "Field analysis takes one field image (up to 24 MB); this file is {mb} MB. Open it on the Whole slides page instead (put it in the server's data/slides folder).",
+      compareSide: { left: "Left", right: "Right" },
+      compareSwap: "Swap sides",
+      compareSidesCaption: "{left} vs. {right}",
+      compareSidesNote: "Drag the handle. Left of it is {left}; right of it is {right}. Both images are the same field, pixel for pixel.",
       enlarge: "Enlarge",
       layers: "Image layers",
       emptyTitle: "No field loaded",
@@ -1133,7 +1141,12 @@ export const STRINGS = {
       signingAs: "ഒപ്പിടുന്നത്",
       record: "എന്റെ വിലയിരുത്തൽ രേഖപ്പെടുത്തുക",
       compare: "താരതമ്യം",
-      compareTitle: "മോഡൽ മാപ്പും ത്രെഷോൾഡ് ബേസ്‌ലൈനും തമ്മിൽ തട്ടിച്ചുനോക്കുക",
+      compareTitle: "ഏതെങ്കിലും രണ്ട് ചിത്രങ്ങൾ വലിച്ചുനീക്കി താരതമ്യം ചെയ്യുക",
+      compareChoose: "താരതമ്യം ചെയ്യേണ്ട ചിത്രങ്ങൾ",
+      compareSide: { left: "ഇടത്", right: "വലത്" },
+      compareSwap: "വശങ്ങൾ മാറ്റുക",
+      compareSidesCaption: "{left} / {right}",
+      compareSidesNote: "ഹാൻഡിൽ വലിക്കുക. ഇടതുവശത്ത് {left}; വലതുവശത്ത് {right}. രണ്ടും ഒരേ ഫീൽഡ് തന്നെ.",
       enlarge: "വലുതാക്കുക",
       layers: "ചിത്ര പാളികൾ",
       emptyTitle: "ഒരു ഫീൽഡും ലോഡ് ചെയ്തിട്ടില്ല",
@@ -1352,7 +1365,7 @@ export const STRINGS = {
 /* The AI pre-score panel's and the review tab's strings live in their own files
    (top-level "prescore", "slides", "review"). */
 for (const lang of ["en", "ml"]) {
-  for (const [key, value] of Object.entries({ ...PRESCORE_STRINGS[lang], ...REVIEW_STRINGS[lang] })) {
+  for (const [key, value] of Object.entries({ ...PRESCORE_STRINGS[lang], ...REVIEW_STRINGS[lang], ...CASEDB_STRINGS[lang] })) {
     if (key in STRINGS[lang]) throw new Error(`strings.prescore.js would overwrite ${lang}.${key}`);
     STRINGS[lang][key] = value;
   }

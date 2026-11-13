@@ -1685,6 +1685,18 @@ table.data--compact td { padding: 10px 12px; }
 }
 
 /* Side-by-side compare: the second pane is revealed by a draggable wipe. */
+.compare-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.compare-pick__side { display: inline-flex; align-items: center; gap: 8px; font-size: 0.8125rem; font-weight: 600; }
+.compare-pick__side .select { height: 34px; padding-top: 0; padding-bottom: 0; font-size: 0.8125rem; width: auto; min-width: 150px; }
+.compare-pick .btn { margin-left: auto; }
 .compare {
   position: relative;
   display: inline-grid;
@@ -1797,9 +1809,9 @@ table.data--compact td { padding: 10px 12px; }
 }
 
 /* The floating note/score form for a just-drawn region, and the read-only
-   popover for an already-saved one. Positioned in JS off the region's own
-   top-right corner (see AnnotationLayer's popoverStyle), clamped there so
-   this fixed width rarely needs to fight the frame's edge. */
+   popover for an already-saved one. Rendered into <body> and placed in JS
+   beside the region (AnnotationLayer's Floating), flipped and clamped to the
+   window, so a box drawn at the frame's edge never has its card clipped. */
 .annot-form,
 .annot-popover {
   position: absolute;
@@ -1813,6 +1825,7 @@ table.data--compact td { padding: 10px 12px; }
   cursor: default;
   transform: translateY(-4px);
 }
+.annot-float { position: fixed; z-index: 60; transform: none; }
 .annot-form__body { display: grid; gap: 10px; }
 .annot-form .score-picker--compact { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
 .annot-form .score-picker--compact .score-opt { padding: 7px 4px; }
@@ -2738,3 +2751,86 @@ tr.row-muted td { color: var(--text-3); font-style: italic; }
 .learn__stats ~ .card { margin-bottom: var(--gap); }
 .learn__h { margin-bottom: 12px; }
 .learn__stats > div { align-content: start; }
+
+/* ---------------------------------------------------------------- case database
+   The Case log's "Cases" tab and one case's detail page (pages/Cases.jsx,
+   pages/CaseDetail.jsx). */
+.seg--page { margin-bottom: var(--gap); }
+.caselist__lede { margin: 0 0 12px; }
+.caselist__person { display: inline-flex; align-items: center; gap: 8px; font-size: 0.8125rem; font-weight: 600; }
+.caselist__person .select { height: 36px; padding-top: 0; padding-bottom: 0; width: auto; min-width: 170px; }
+.caselist__row { cursor: pointer; transition: background var(--t-fast) var(--ease); }
+.caselist__row:hover, .caselist__row:focus-visible { background: var(--accent-soft); outline: none; }
+.caselist__case { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.caselist__case img, .caselist__nothumb {
+  flex: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: var(--line-soft);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.caselist__case > span:last-child { display: grid; gap: 2px; min-width: 0; }
+.caselist__name { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.caselist__review { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.caselist__people { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.caselist__people .avatar + .tiny { margin-left: 4px; }
+
+.casedetail__title { word-break: break-all; }
+.casedetail__top { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: var(--gap); margin-bottom: var(--gap); }
+.casedetail__thumb { display: grid; place-items: center; }
+.casedetail__thumb img, .casedetail__thumb .caselist__nothumb { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 10px; }
+.casedetail__kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 10px; }
+.casedetail__kpi { display: grid; gap: 6px; padding: 12px; border-radius: var(--r-sm); background: var(--line-soft); }
+.casedetail__section { margin-bottom: var(--gap); }
+.casedetail__section > h2 { margin: 0 0 4px; font-size: 1.05rem; }
+.casedetail__list { display: grid; gap: 14px; margin-top: 12px; }
+.casedetail__card { border: 1px solid var(--line); border-radius: var(--r-md, 12px); padding: 14px 16px; display: grid; gap: 12px; }
+.casedetail__cardhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.casedetail__cardhead .who { margin-right: auto; }
+.casedetail__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.casedetail__grid h3 { font-size: 0.8125rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); margin: 0 0 8px; }
+.casedetail__grid h4 { font-size: 0.75rem; color: var(--text-3); margin: 12px 0 6px; }
+.casedetail__grid h3 ~ h3 { margin-top: 14px; }
+.casedetail__grid p { margin: 0 0 8px; }
+.casedetail__big { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.casedetail__hot { margin: 0; padding-left: 18px; font-size: 0.8125rem; display: grid; gap: 3px; }
+.casedetail__flags summary { cursor: pointer; font-size: 0.8125rem; font-weight: 600; }
+.casedetail__flags ul { margin: 8px 0 0; padding-left: 18px; font-size: 0.8125rem; display: grid; gap: 4px; }
+.casedetail__who { font-weight: 600; font-size: 0.875rem; }
+.casedetail__kv { display: grid; gap: 0; margin: 0 0 8px; font-size: 0.8125rem; }
+.casedetail__kv > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--line-soft); }
+.casedetail__kv dt { display: inline-flex; align-items: center; gap: 6px; margin: 0; min-width: 0; }
+.casedetail__kv dt i { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.casedetail__kv dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+.casedetail__kv > .is-total { border-bottom: 0; font-weight: 700; }
+@media (max-width: 980px) {
+  .casedetail__top { grid-template-columns: 1fr; }
+  .casedetail__thumb img { max-width: 260px; }
+  .casedetail__grid, .casedetail__kpis { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 600px) {
+  .casedetail__grid, .casedetail__kpis { grid-template-columns: 1fr; }
+}
+
+/* pathologist-marked tumour regions on the whole-slide viewer (pages/Slides.jsx) */
+.slides .viewer { position: relative; }
+.slides__drawlayer { position: absolute; inset: 0; z-index: 5; cursor: crosshair; touch-action: none; border-radius: 10px;
+  box-shadow: inset 0 0 0 2px var(--accent); }
+.slides__roi { position: absolute; border: 2px solid #22c55e; background: rgba(34, 197, 94, 0.12); border-radius: 3px; pointer-events: none; }
+.slides__roi::before { content: attr(data-n); position: absolute; top: -10px; left: -10px; width: 18px; height: 18px; border-radius: 50%;
+  background: #22c55e; color: #fff; font-size: 0.7rem; font-weight: 800; display: grid; place-items: center; }
+.slides__roi--draft { border-style: dashed; }
+.slides__roi--draft::before { display: none; }
+.slides__regions { margin: 10px 0 12px; display: grid; gap: 6px; }
+.slides__regions .hint { margin: 0; }
+
+/* the cell-level pre-score (whole slides): the headline, with the 10% cut-off marked on each bar
+   (bars are scaled so 25% of cells fills the track; the marker sits at 10%) */
+.prescore__hero--primary { border: 1.5px solid var(--accent); border-radius: var(--r-md, 12px); padding: 12px; margin-bottom: 12px; }
+.prescore__bar--wide { grid-template-columns: 92px minmax(0, 1fr) 52px; }
+.prescore__track--cut { position: relative; }
+.prescore__track--cut::after { content: ""; position: absolute; left: 40%; top: -3px; bottom: -3px; width: 2px; background: var(--text-2); }
+.prescore__review { margin: 0 0 10px; padding-left: 18px; font-size: 0.8125rem; color: #9a5b00; display: grid; gap: 3px; }
+.prescore__probhint { margin: 0 0 6px; font-size: 0.75rem; }

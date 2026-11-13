@@ -90,8 +90,13 @@ def prediction_set(probabilities: dict, run_dir: Path, site: str | None, alpha: 
 
 
 class PrescoreEngine:
-    def __init__(self, checkpoint: str | Path, device: str = "cpu") -> None:
+    def __init__(self, checkpoint: str | Path, device: str = "cpu", site_norm: tuple | None = None) -> None:
+        """``site_norm``: (this site's stain profile, the training site's profile) -- when given, every image is
+        re-coloured into the training site's stain space before the model sees it (training/gpu_ops.normalize_to_site).
+        A scanner whose DAB reads ~8x weaker (HER2match) otherwise looks like 0 to a model trained elsewhere."""
         from training.v2_engine import load_model
+
+        self.site_norm = site_norm
 
         self.checkpoint = Path(checkpoint)
         self.device = torch.device(device)
@@ -106,8 +111,53 @@ class PrescoreEngine:
         rows, cols = max(1, -(-h // TILE)), max(1, -(-w // TILE))
         canvas = np.full((rows * TILE, cols * TILE, 3), 255, dtype=np.uint8)
         canvas[:h, :w] = rgb
-        x = torch.from_numpy(canvas).permute(2, 0, 1)[None].float().div(255.0)
+        x = self._normalise(torch.from_numpy(canvas).permute(2, 0, 1)[None].float().div(255.0))
         return gpu_ops.to_tiles(x, TILE), rows, cols, canvas
+
+    def _normalise(self, x: torch.Tensor) -> torch.Tensor:
+        if self.site_norm is None:
+            return x
+        return gpu_ops.normalize_to_site(x, *self.site_norm).clamp(0, 1)
+
+    def _evidence(self, canvas: np.ndarray, grade: int) -> np.ndarray:
+        """Seamless Grad-CAM for ``grade`` over the whole (tile-padded) canvas.
+
+        The field pre-score pools fixed 512 px tiles, but a map taken from the pooled logit
+        is near zero on every tile the attention weighted lightly, and each tile's map
+        stops dead at its border -- the heat looked cut along the regional grid. Here
+        every tile explains its OWN score for the field's grade, tiles overlap by half,
+        and they are blended with a smooth window, so evidence runs continuously across
+        tile borders. Only the picture changes: scores still come from the plain tiling.
+        """
+        h, w = canvas.shape[:2]
+        step = TILE // 2
+        ys = list(range(0, h - TILE + 1, step))
+        xs = list(range(0, w - TILE + 1, step))
+        x = self._normalise(torch.from_numpy(canvas).permute(2, 0, 1)[None].float().div(255.0))[0]
+        tiles = torch.stack([x[:, y:y + TILE, c:c + TILE] for y in ys for c in xs])
+        m = self.model
+        cams = []
+        for chunk in torch.split(tiles, 8):
+            pixels = gpu_ops.model_input(chunk).to(self.device)
+            with torch.enable_grad():
+                _, feats = m.unet(m.standardize(pixels), return_features=True, with_seg=False)
+                emb = m.embed(torch.cat([feats.mean((2, 3)), feats.amax((2, 3))], 1))
+                # tiles are independent through the encoder (eval mode), so one backward
+                # of the summed logits gives each tile the gradient of its own logit
+                grad = torch.autograd.grad(m.score_head(emb)[:, grade].sum(), feats)[0]
+            with torch.no_grad():
+                cam = F.relu((grad.mean((2, 3), keepdim=True) * feats).sum(1, keepdim=True))
+                cams.append(F.interpolate(cam, size=(TILE, TILE), mode="bilinear", align_corners=False)[:, 0].cpu())
+        cams = torch.cat(cams).numpy()
+        # raised-cosine window with a floor, so canvas edges (covered by one tile) still count
+        win1 = 0.15 + 0.85 * np.sin(np.linspace(0, np.pi, TILE, dtype=np.float32)) ** 2
+        win = np.outer(win1, win1)
+        acc = np.zeros((h, w), dtype=np.float32)
+        weight = np.zeros((h, w), dtype=np.float32)
+        for i, (y, c) in enumerate((y, c) for y in ys for c in xs):
+            acc[y:y + TILE, c:c + TILE] += cams[i] * win
+            weight[y:y + TILE, c:c + TILE] += win
+        return acc / np.maximum(weight, 1e-6)
 
     def run(self, rgb: np.ndarray, tissue: np.ndarray | None = None) -> PrescoreResult:
         tiles, rows, cols, canvas = self._tiles(rgb)
@@ -118,23 +168,15 @@ class PrescoreEngine:
             tissue_frac = np.array([t[r * TILE:(r + 1) * TILE, c * TILE:(c + 1) * TILE].mean() for r in range(rows) for c in range(cols)])
         m = self.model
         pixels = gpu_ops.model_input(tiles).to(self.device)
-        with torch.enable_grad():
+        with torch.no_grad():
             _, feats = m.unet(m.standardize(pixels), return_features=True, with_seg=False)
             tile_emb = m.embed(torch.cat([feats.mean((2, 3)), feats.amax((2, 3))], 1))
             bag, attention = m.pool(tile_emb, [tile_emb.shape[0]])
             logits = m.score_head(bag)[0]
             pred = int(logits.argmax())
-            grad = torch.autograd.grad(logits[pred], feats)[0]
-        with torch.no_grad():
             probs = F.softmax(logits.float(), -1).numpy()
             tile_probs = F.softmax(m.score_head(tile_emb).float(), -1).numpy()
-            cam = F.relu((grad.mean((2, 3), keepdim=True) * feats).sum(1, keepdim=True))
-            cam = F.interpolate(cam, size=(TILE, TILE), mode="bilinear", align_corners=False)[:, 0].numpy()
-        heat = np.zeros((rows * TILE, cols * TILE), dtype=np.float32)
-        for i in range(rows * cols):
-            r, c = divmod(i, cols)
-            heat[r * TILE:(r + 1) * TILE, c * TILE:(c + 1) * TILE] = cam[i]
-        heat = heat[: rgb.shape[0], : rgb.shape[1]]
+        heat = self._evidence(canvas, pred)[: rgb.shape[0], : rgb.shape[1]]
         heat = heat / max(1e-6, float(np.percentile(heat, 99.5)))
         order = np.argsort(-probs)
         att = attention[0].numpy()

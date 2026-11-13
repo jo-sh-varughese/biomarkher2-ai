@@ -3,6 +3,7 @@
 Routes (all behind sign-in; permission names from app.auth.PERMISSIONS):
 
     GET  /api/slides                                  list slides under --slide-root
+    POST /api/slides/upload?name=<file>               add a slide: the raw file as the body
     GET  /api/slides/<id>/info                        size, microns/px, scanner, overview
     GET  /api/slides/<id>/dzi                         Deep Zoom descriptor for OpenSeadragon
     GET  /api/slides/<id>/dzi_files/<level>/<col>_<row>.jpeg   Deep Zoom tile (the path
@@ -24,9 +25,11 @@ import time
 from pathlib import Path
 
 from wsi.analysis import Progress, SlideAnalyzer, SlideSettings
-from wsi.reader import Slide, list_slides
+from wsi.reader import SLIDE_SUFFIXES, Slide, list_slides
 
 _SID = r"(?P<slide_id>[A-Za-z0-9_-]+)"
+MAX_SLIDE_UPLOAD_BYTES = 8 * 1024**3
+_CHUNK = 4 * 1024 * 1024
 
 
 def encode_id(rel: str) -> str:
@@ -41,6 +44,7 @@ def routes(make):
     """Route table entries, built with app.server._route."""
     return (
         make("GET", "/api/slides", "_slides_list", "view"),
+        make("POST", "/api/slides/upload", "_slide_upload", "analyze", raw_body=True),
         make("GET", f"/api/slides/{_SID}/info", "_slide_info", "view"),
         make("GET", f"/api/slides/{_SID}/dzi", "_slide_dzi", "view"),
         make("GET", rf"/api/slides/{_SID}/dzi_files/(?P<level>\d+)/(?P<col>\d+)_(?P<row>\d+)\.jpeg", "_slide_tile", "view"),
@@ -62,6 +66,7 @@ class SlideState:
         self._lock = threading.Lock()
         self._run_lock = threading.Lock()  # one slide analysis at a time
         self.jobs: dict[str, dict] = {}
+        self.case_store = None  # app.case_store.CaseStore; set by the server
 
     def path(self, sid: str) -> Path:
         rel = decode_id(sid)
@@ -80,7 +85,7 @@ class SlideState:
                     self._open.pop(old)[0].close()
             return self._open[sid]
 
-    def start(self, sid: str) -> dict:
+    def start(self, sid: str, user: dict | None = None, regions: list | None = None) -> dict:
         job = self.jobs.get(sid)
         if job and job["status"] in ("queued", "running"):
             return self.public(sid)
@@ -92,7 +97,9 @@ class SlideState:
                 self.jobs[sid]["status"] = "running"
                 try:
                     slide, _ = self.slide(sid)
-                    self.jobs[sid]["result"] = self.slide_analyzer.run(slide, progress)
+                    result = self.slide_analyzer.run(slide, progress, regions=regions)
+                    self._record(sid, result, user)
+                    self.jobs[sid]["result"] = result
                     self.jobs[sid]["status"] = "done"
                 except Exception as exc:  # noqa: BLE001 - reported to the user, not swallowed
                     self.jobs[sid]["status"] = "error"
@@ -100,6 +107,19 @@ class SlideState:
 
         threading.Thread(target=work, daemon=True).start()
         return self.public(sid)
+
+    def _record(self, sid: str, result: dict, user: dict | None) -> None:
+        """Add the finished analysis to the case database (who ran it, what it found)."""
+        if self.case_store is None or user is None:
+            return
+        from app.case_store import thumbnail_from_data_uri
+
+        rel = decode_id(sid)
+        try:
+            self.case_store.record_analysis("slide", result, user, source=rel, name=Path(rel).name,
+                                            thumbnail=thumbnail_from_data_uri((result.get("images") or {}).get("overview")))
+        except Exception as exc:  # noqa: BLE001 - the analysis itself succeeded; say why it was not logged
+            result.setdefault("flags", []).append(f"Not saved to the case database: {type(exc).__name__}: {exc}")
 
     def public(self, sid: str) -> dict:
         job = self.jobs.get(sid)
@@ -131,6 +151,43 @@ class SlideRoutesMixin:
             it["analysis"] = job["status"] if job else "none"
         return {"slides": items, "root": str(s.root)}
 
+    def _slide_upload(self, call) -> dict:
+        s = self._slides()
+        # The body is not consumed on a refusal, so the connection cannot be reused.
+        self.close_connection = True
+        name = Path((call.query.get("name") or "").replace("\\", "/")).name
+        name = "".join(c if c.isalnum() or c in "._- " else "_" for c in name).strip(" .")
+        if not name or Path(name).suffix.lower() not in SLIDE_SUFFIXES:
+            raise ValueError("Upload a scanned slide: " + ", ".join(SLIDE_SUFFIXES) + ".")
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            raise ValueError("The file is empty.")
+        if length > MAX_SLIDE_UPLOAD_BYTES:
+            raise ValueError(f"Slide files up to {MAX_SLIDE_UPLOAD_BYTES // 1024**3} GB can be uploaded.")
+        s.root.mkdir(parents=True, exist_ok=True)
+        dest = s.root / name
+        n = 1
+        while dest.exists():  # never replace a slide that has already been analysed
+            dest = s.root / f"{Path(name).stem}_{n}{Path(name).suffix}"
+            n += 1
+        part = dest.with_name(dest.name + ".part")
+        try:
+            with open(part, "wb") as out:
+                left = length
+                while left:
+                    chunk = self.rfile.read(min(_CHUNK, left))
+                    if not chunk:
+                        raise ValueError("The upload was interrupted.")
+                    out.write(chunk)
+                    left -= len(chunk)
+            part.replace(dest)
+        except BaseException:
+            part.unlink(missing_ok=True)
+            raise
+        self.close_connection = False
+        return {"id": encode_id(dest.relative_to(s.root).as_posix()), "name": dest.name,
+                "size_mb": round(length / 1e6, 1)}
+
     def _slide_info(self, call) -> dict:
         from app.analysis import to_data_uri
 
@@ -158,7 +215,10 @@ class SlideRoutesMixin:
     def _slide_analyze(self, call) -> dict:
         s = self._slides()
         s.path(call.params["slide_id"])  # validates the id before starting anything
-        return s.start(call.params["slide_id"])
+        regions = call.body.get("regions") if isinstance(call.body, dict) else None
+        if regions is not None and (not isinstance(regions, list) or len(regions) > 50):
+            raise ValueError("regions must be a list of at most 50 boxes {x, y, w, h} in slide pixels")
+        return s.start(call.params["slide_id"], call.user, regions or None)
 
     def _slide_analysis(self, call) -> dict:
         return self._slides().public(call.params["slide_id"])

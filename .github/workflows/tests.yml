@@ -61,3 +61,21 @@ jobs:
 
       - name: Server --help starts without crashing
         run: docker run --rm biomarkher2:ci --help > /dev/null
+
+      - name: Stain-map model loads with no network, as on the SDC VM
+        # The server once downloaded ImageNet weights before loading its own
+        # checkpoint, and crashed in the container (found 2026-11-11).
+        run: |
+          docker run --rm --network none --entrypoint python biomarkher2:ci -c "
+          import dataclasses, pathlib, torch
+          from models import select_architecture
+          from training.config import TrainingConfig
+          from app.analysis import Analyzer
+          cfg = TrainingConfig.from_yaml('configs/training.yaml')
+          build, _ = select_architecture(cfg.model.architecture)
+          run = pathlib.Path('/tmp/run'); run.mkdir()
+          model = build(dataclasses.replace(cfg.model, pretrained=False), verbose=False)
+          torch.save({'model_state': model.state_dict(), 'epoch': 1}, run / 'best.pt')
+          Analyzer(run, 'configs/training.yaml', 'configs/preprocessing.yaml')
+          print('stain map loads offline')
+          "

@@ -33,7 +33,7 @@ from __future__ import annotations
 import base64
 import io
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -417,6 +417,7 @@ class Analyzer:
         preprocessing_config: str | Path = "configs/preprocessing.yaml",
         conformal_alpha: float = 0.10,
         prescore_checkpoint: str | Path | None = None,
+        prescore_site_norm: tuple | None = None,
         site_policy: dict | None = None,
         cell_params_path: str | Path | None = "configs/cell_params.json",
         shadow_log: str | Path | None = None,
@@ -437,7 +438,10 @@ class Analyzer:
         self.in_channels = int(self.config.model.in_channels)
 
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        self.model = build_model(self.config.model, verbose=False)
+        # Every weight comes from the checkpoint, so never build the encoder with
+        # ImageNet weights first: that is a download, and a server without internet
+        # (the SDC VM) or without a writable cache (the Docker image) failed to start.
+        self.model = build_model(replace(self.config.model, pretrained=False), verbose=False)
         self.model.load_state_dict(checkpoint["model_state"])
         self.model.eval()
 
@@ -490,7 +494,7 @@ class Analyzer:
             try:
                 from app.prescore import PrescoreEngine
 
-                self.prescore_engine = PrescoreEngine(prescore_checkpoint)
+                self.prescore_engine = PrescoreEngine(prescore_checkpoint, site_norm=prescore_site_norm)
             except Exception as exc:  # noqa: BLE001 - degrade, don't crash
                 print(f"NOTE: could not load pre-score model {prescore_checkpoint} ({type(exc).__name__}: {exc}); "
                       "analyses will carry cell evidence only.")

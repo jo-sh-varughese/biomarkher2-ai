@@ -29,6 +29,9 @@ export default function PrescorePanel({ analysis }) {
   const shown = !blocked && pre?.shown && pre?.prescore;
   const p = shown ? pre.prescore : null;
   const tone = ISH_TONE[guide?.ish?.level] || ISH_TONE.not_applicable;
+  // Whole slides: the cell-level ASCO/CAP call is the pre-score and the AI score a second opinion
+  // (wsi/analysis.py primary_score); fields keep the AI pre-score as the headline.
+  const primary = !blocked && analysis?.primary_score?.available ? analysis.primary_score : null;
 
   return (
     <section className="card card--pad prescore" aria-labelledby="prescore-title">
@@ -63,11 +66,49 @@ export default function PrescorePanel({ analysis }) {
         <p className="hint">{t("prescore.qualityNotes")}: {quality.notes.join(" ")}</p>
       ) : null}
 
+      {primary ? (
+        <div className="prescore__hero prescore__hero--primary">
+          <div>
+            <div className="prescore__label">{t("prescore.primaryLabel")}</div>
+            <div className="prescore__grade" style={{ color: GRADE_COLOR[primary.category] }}>IHC {primary.category}</div>
+            <p className="hint">
+              {t("prescore.primaryCells", { n: primary.cells_measured })} ·{" "}
+              {primary.restricted_to_regions ? t("prescore.primaryRegions") : t("prescore.primaryAuto")}
+            </p>
+            {primary.ai_second_opinion ? (
+              <p className={primary.agrees_with_ai ? "hint" : "prescore__flag"}>
+                {t(primary.agrees_with_ai ? "prescore.aiAgrees" : "prescore.aiDiffers", { grade: primary.ai_second_opinion })}
+              </p>
+            ) : null}
+          </div>
+          <div className="prescore__bars">
+            <div className="prescore__label">{t("prescore.primaryRests")}</div>
+            {[["cumAtLeast1", primary.cumulative_percent.at_least_1plus, "1+"],
+              ["cumAtLeast2", primary.cumulative_percent.at_least_2plus, "2+"],
+              ["cum3", primary.cumulative_percent["3plus"], "3+"]].map(([key, v, g]) => (
+              <div key={key} className="prescore__bar prescore__bar--wide">
+                <span className="prescore__barlabel">{t(`prescore.${key}`)}</span>
+                <span className="prescore__track prescore__track--cut">
+                  <span style={{ width: `${Math.min(100, v * 4)}%`, background: GRADE_COLOR[g] }} />
+                </span>
+                <span className="num">{v.toFixed(1)}%</span>
+              </div>
+            ))}
+            <p className="hint">{t("prescore.primaryRule", { text: primary.nearest_cut.text, gap: (primary.nearest_cut.gap_points > 0 ? "+" : "") + primary.nearest_cut.gap_points })}</p>
+          </div>
+        </div>
+      ) : !blocked && analysis?.primary_score?.unavailable_reasons?.length ? (
+        <p className="hint">{t("prescore.primaryNone", { reasons: analysis.primary_score.unavailable_reasons.join("; ") })}</p>
+      ) : null}
+      {primary?.review?.length ? (
+        <ul className="prescore__review">{primary.review.map((r) => <li key={r}>{r}</li>)}</ul>
+      ) : null}
+
       {/* ---------------------------------------------------- pre-score --- */}
       {blocked ? null : p ? (
         <div className="prescore__hero">
           <div>
-            <div className="prescore__label">{t("prescore.label")}</div>
+            <div className="prescore__label">{t(primary ? "prescore.labelSecond" : "prescore.label")}</div>
             <div className="prescore__grade" style={{ color: GRADE_COLOR[p.category] }}>IHC {p.category}</div>
             <p className="hint">
               {t("prescore.confidence", { value: pct(p.confidence) })} ·{" "}
@@ -84,6 +125,7 @@ export default function PrescorePanel({ analysis }) {
           </div>
           <div className="prescore__bars" aria-label={t("prescore.probabilities")}>
             <div className="prescore__label">{t("prescore.probabilities")}</div>
+            <p className="hint prescore__probhint">{t("prescore.probHint")}</p>
             {GRADES.map((g) => (
               <div key={g} className="prescore__bar">
                 <span className="prescore__barlabel">{g}</span>

@@ -68,8 +68,10 @@ def bci_score(name: str) -> int:
     return SCORES.index(match.group(1))
 
 
-def her2_ihc_40x_samples(patch_root: str | Path, split_json: str | Path, split: str, limit_per_class: int | None = None, seed: int = 0) -> list[Sample]:
-    """Our patches for one split side, located by file name under ``patch_root``."""
+def her2_ihc_40x_samples(patch_root: str | Path, split_json: str | Path, split: str, limit_per_class: int | None = None, seed: int = 0, allow_missing: bool = False) -> list[Sample]:
+    """Our patches for one split side, located by file name under ``patch_root``.
+
+    ``allow_missing`` is for the embedding pod, which receives only the per-class subset it will use."""
     ids = json.loads(Path(split_json).read_text(encoding="utf-8"))["patch_ids"][split]
     wanted = {Path(i).name for i in ids}
     found: dict[str, Path] = {}
@@ -78,7 +80,7 @@ def her2_ihc_40x_samples(patch_root: str | Path, split_json: str | Path, split: 
         if path.suffix.lower() in (".png", ".jpg", ".jpeg") and path.name in wanted:
             found[path.name] = path
     missing = len(wanted) - len(found)
-    if missing:
+    if missing and not allow_missing:
         raise FileNotFoundError(f"{missing} of {len(wanted)} {split} patches not found under {patch_root}")
     samples = [
         Sample(str(p), "her2_ihc_40x", FOLDER_TO_SCORE[p.parent.name], _slide_score(p.name), True, "native")
@@ -173,3 +175,90 @@ def balanced_sampler(samples: list[Sample], num_samples: int, seed: int) -> torc
     weights = torch.tensor([1.0 / groups[(s.site, s.label)] for s in samples], dtype=torch.double)
     generator = torch.Generator().manual_seed(seed)
     return torch.utils.data.WeightedRandomSampler(weights, num_samples=num_samples, replacement=True, generator=generator)
+
+
+# --------------------------------------------------------------------------
+# HER2match (Zenodo 10.5281/zenodo.15797050, CC BY-NC-SA 4.0)
+# --------------------------------------------------------------------------
+# 1024 px IHC tiles at 0.25 um/px (3DHistech P1000) cut from 17 slides, each with
+# ONE slide-level HER2 score (HER2match_scores.csv). Tiles are named
+# wsi<NNN>_id<k>_x<X>_y<Y>.jpg under IHC/{train,val,test}/.
+#
+# Two choices made before any training:
+# * The label of a tile is its slide's score, which is only true for tumour. A stroma
+#   or fat tile from a 2+ slide is not "2+", so only tiles that look like tumour
+#   (crowded nuclei or membrane DAB, see tile_tumour_score) are used.
+# * Slides held out entirely (never trained on, never used to choose an epoch) are
+#   the slides the portal is tested on: 013, 015, 016, 025.
+
+HER2MATCH_HELDOUT = {13, 15, 16, 25}
+_SLIDE_RE = re.compile(r"wsi(\d+)_")
+
+
+def her2match_scores(csv_path: str | Path) -> dict[int, int]:
+    """slide number -> score index (0..3) from HER2match_scores.csv (``slide ID;HER score;set``)."""
+    out = {}
+    for line in Path(csv_path).read_text(encoding="utf-8-sig").splitlines()[1:]:
+        parts = [p.strip() for p in line.split(";")]
+        if len(parts) >= 2 and parts[0].isdigit():
+            out[int(parts[0])] = SCORES.index(parts[1])
+    return out
+
+
+def tile_tumour_score(path: str | Path) -> float:
+    """Share of a tile that looks like tumour: crowded nuclei + DAB, measured at 256 px.
+
+    Same signals as the slide pipeline's field choice (wsi/analysis.py): pixels clearly
+    darker than their local background (nuclei), plus DAB-brown pixels. Fat, glass and
+    loose stroma score low.
+    """
+    from scipy.ndimage import gaussian_filter
+
+    rgb = np.asarray(Image.open(path).convert("RGB").resize((256, 256)), dtype=np.float32)
+    grey = rgb.mean(-1)
+    bright = grey > 225
+    nuclei = ((gaussian_filter(grey, 3.0) - grey) > 12) & ~bright
+    dab = ((rgb[..., 0] - rgb[..., 2]) > 15) & (grey < 215)
+    return float(nuclei.mean() + 2.0 * dab.mean())
+
+
+def her2match_samples(root: str | Path, scores_csv: str | Path, role: str, min_tumour: float = 0.08,
+                      limit_per_class: int | None = None, seed: int = 0, cache: str | Path | None = None) -> list[Sample]:
+    """HER2match IHC tiles for ``role``:
+
+    * "fit": the dataset's train split.
+    * "val": the val and test splits WITHOUT the held-out slides (epoch selection only).
+    * "fit_all": all splits WITHOUT the held-out slides (training when the epoch count is fixed in advance).
+    * "heldout": tiles of the held-out slides (reporting only).
+    """
+    root = Path(root)
+    scores = her2match_scores(scores_csv)
+    # "fit_all": every slide except the held-out ones (more 1+ / 2+ slides; no slides left for epoch selection)
+    folders = {"fit": ["train"], "val": ["val", "test"], "fit_all": ["train", "val", "test"],
+               "heldout": ["train", "val", "test"]}[role]
+    paths = []
+    for sub in folders:
+        for p in sorted((root / sub).glob("*.jpg")):
+            m = _SLIDE_RE.match(p.name)
+            if not m:
+                continue
+            slide = int(m.group(1))
+            if (role == "heldout") != (slide in HER2MATCH_HELDOUT):
+                continue
+            paths.append((p, slide))
+    cached: dict[str, float] = {}
+    cache = Path(cache) if cache else None
+    if cache and cache.is_file():
+        cached = json.loads(cache.read_text(encoding="utf-8"))
+    todo = [str(p) for p, _ in paths if str(p) not in cached]
+    if todo:
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor() as pool:
+            for path, value in zip(todo, pool.map(tile_tumour_score, todo, chunksize=64)):
+                cached[path] = value
+        if cache:
+            cache.write_text(json.dumps(cached), encoding="utf-8")
+    samples = [Sample(str(p), "her2match", scores[s], scores[s], False, "native")
+               for p, s in paths if cached[str(p)] >= min_tumour]
+    return _limit(samples, limit_per_class, seed)

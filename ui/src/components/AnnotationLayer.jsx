@@ -16,7 +16,8 @@
    delete once the server has accepted one, only while it is still a draft.
    ========================================================================= */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Icon from "./Icon.jsx";
 import { useT } from "../i18n/I18nContext.jsx";
 
@@ -126,11 +127,13 @@ export default function AnnotationLayer({ imgRef, annotations, reviewChoices, on
       ))}
 
       {draft ? <span className="annot-box annot-box--draft" style={boxStyle(rectFrom(draft))} /> : null}
+      {/* the finished box stays outlined while its note is being written */}
+      {pending ? <span className="annot-box annot-box--draft" style={boxStyle(pending)} /> : null}
 
       {pending ? (
-        <div className="annot-form" style={popoverStyle(pending)} onPointerDown={(e) => e.stopPropagation()}>
+        <Floating className="annot-form" imgRef={imgRef} region={pending}>
           <AnnotationForm reviewChoices={reviewChoices} saving={saving} t={t} onCancel={cancel} onSubmit={submit} />
-        </div>
+        </Floating>
       ) : null}
 
       {activeId != null
@@ -138,11 +141,7 @@ export default function AnnotationLayer({ imgRef, annotations, reviewChoices, on
             const a = annotations.find((x, i) => (x.id ?? i) === activeId);
             if (!a) return null;
             return (
-              <div
-                className="annot-popover"
-                style={popoverStyle(a)}
-                onPointerDown={(e) => e.stopPropagation()}
-              >
+              <Floating className="annot-popover" imgRef={imgRef} region={a}>
                 <div className="annot-popover__head">
                   {a.score ? <b>{a.score}</b> : null}
                   <button
@@ -156,7 +155,7 @@ export default function AnnotationLayer({ imgRef, annotations, reviewChoices, on
                 </div>
                 {a.note ? <p>{a.note}</p> : null}
                 <span className="tiny muted">{a.reviewer}</span>
-              </div>
+              </Floating>
             );
           })()
         : null}
@@ -247,13 +246,56 @@ function boxStyle(r) {
   };
 }
 
-/* Floating cards anchor at the box's top-right corner, clamped so they do
-   not run off the edge of the frame -- there is no viewport-aware
-   repositioning here, just enough margin that the common case (a box drawn
-   somewhere in the middle two-thirds of the image) never clips. */
-function popoverStyle(r) {
-  return {
-    left: `${Math.min(r.x + r.w, 0.72) * 100}%`,
-    top: `${Math.min(r.y, 0.8) * 100}%`,
-  };
+/* The note/score form and the saved-note popover float above the whole page
+   (a portal with fixed positioning), not inside the image frame: the viewer
+   stage clips its contents, so a card anchored inside it was cut off whenever
+   the box was drawn near an edge. The card sits beside the box, flips to the
+   other side when there is no room, and is clamped to the window. */
+const GAP = 8;
+
+function Floating({ className, imgRef, region, children }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null);
+
+  const place = useCallback(() => {
+    const img = imgRef.current?.getBoundingClientRect();
+    const card = ref.current;
+    if (!img || !card) return;
+    const cw = card.offsetWidth;
+    const ch = card.offsetHeight;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const boxLeft = img.left + region.x * img.width;
+    const boxRight = boxLeft + region.w * img.width;
+    const boxTop = img.top + region.y * img.height;
+    let left = boxRight + GAP;
+    if (left + cw > vw - GAP) left = boxLeft - GAP - cw; // no room on the right: go left
+    left = Math.max(GAP, Math.min(left, vw - cw - GAP));
+    const top = Math.max(GAP, Math.min(boxTop, vh - ch - GAP));
+    setPos({ left, top });
+  }, [imgRef, region]);
+
+  useLayoutEffect(() => {
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [place]);
+
+  return createPortal(
+    <div
+      ref={ref}
+      className={`${className} annot-float`}
+      style={pos ?? { left: -9999, top: 0 }}
+      // React events bubble through portals: stop the press reaching the
+      // drawing layer, or clicking inside the card would start a new box.
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>,
+    document.body,
+  );
 }

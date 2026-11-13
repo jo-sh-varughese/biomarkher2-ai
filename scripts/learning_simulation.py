@@ -37,6 +37,7 @@ def main() -> None:
     ap.add_argument("--features", required=True)
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--repeats", type=int, default=10)
+    ap.add_argument("--ks", type=int, nargs="+", default=[25, 50, 100, 150], help="numbers of confirmed local cases to learn from")
     ap.add_argument("--test", type=int, default=200)
     ap.add_argument("--seed", type=int, default=20261003)
     args = ap.parse_args()
@@ -59,7 +60,7 @@ def main() -> None:
     test = [bci[i] for i in test_idx]
     base_test, base_ref = H.metrics(base, test), H.metrics(base, reference)
     print(f"base: BCI test {base_test['accuracy']:.3f} / QWK {base_test['qwk']:.3f}; reference {base_ref['accuracy']:.3f}", flush=True)
-    ks = [k for k in (25, 50, 100, 150) if k < len(pool_idx)] + [len(pool_idx)]
+    ks = [k for k in args.ks if k < len(pool_idx)] + [len(pool_idx)]
     rows = []
     for k in ks:
         accs, qwks, refs, ref_qwks, passed = [], [], [], [], []

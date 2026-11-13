@@ -92,3 +92,38 @@ def blue_cast(rgb: np.ndarray, glass_rgb) -> float:
     bright = px[px.sum(1) >= np.percentile(px.sum(1), 90)]
     g = np.asarray(glass_rgb, dtype=np.float32)
     return float((bright[:, 2].mean() - bright[:, 0].mean()) - (g[2] - g[0]))
+
+
+DAB_TISSUE_SHARE = 0.05  # a block with this much brown DAB is stained tissue, never an ink film
+
+
+def dab_share(rgb: np.ndarray) -> float:
+    """Fraction of a region's pixels that are brown DAB (red clearly above blue, not near-white).
+
+    The ink check (blue_cast) assumes real tissue has near-glass gaps. Dense
+    tumour on a scanner that clips glass to pure white (3DHistech, HER2match)
+    has none: its palest pixels are light-blue haematoxylin stroma, so a 3+
+    tumour read as "blue film" and was excluded whole. Ink and mounting films
+    carry no DAB (ACROBAT case 39: ink blocks are blue, DAB blocks cast -2),
+    so a block with clear DAB staining is never treated as an artefact.
+    """
+    px = rgb.reshape(-1, 3).astype(np.float32)
+    return float(((px[:, 0] - px[:, 2] > 25) & (px.sum(1) < 600)).mean())
+
+
+INK_TEXTURE = 8.0  # fine-detail level below which a blue block can be a film (see block_texture)
+
+
+def block_texture(rgb: np.ndarray) -> float:
+    """Mean absolute fine detail (grey minus its 2-px blur): how much structure a region has.
+
+    Ink and mounting films are smooth tinted sheets with a few specks (ACROBAT case 39:
+    median 1.4, 95th percentile 6.1 at 2 um/px). Tissue, however blue its scanner makes
+    it, is full of nuclei and fibres (HER2match tumour and stroma: 9.7 and up). The
+    blue-cast test alone cannot tell the two apart on a scanner that clips glass to pure
+    white; this can.
+    """
+    from scipy.ndimage import gaussian_filter
+
+    g = rgb.astype(np.float32).mean(-1)
+    return float(np.abs(g - gaussian_filter(g, 2.0)).mean())
